@@ -1,0 +1,3 @@
+Prototipo 0 : Verificar que BepInEx carga correctamente el plugin recién creado VitaSync 
+Prototipo 1 : Establecer una conexión funcional entre VitaSync y el módulo cloud de LifeSync-Games
+Prototipo 2 : Construir la representación interna del perfil físico de LSG donde se obtenga el salgo disponible(cant. ptos. dimensión física)
