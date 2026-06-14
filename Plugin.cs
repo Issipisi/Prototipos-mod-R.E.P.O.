@@ -36,10 +36,17 @@ namespace VitaSync
                 var profile = GetProfile();
                 if (profile == null || !GetClient().IsAuthenticated)
                 {
-                    Log.LogInfo("[P2-Shop] Esperando perfil activo de LifeSync-Games...");
+                    Log.LogInfo("[P3-Shop] Esperando perfil activo de LifeSync-Games...");
                     return;
                 }
-                Log.LogInfo("[P2-Shop] Tienda detectada con éxito. Perfil cargado con: " + profile.Puntos + " puntos.");
+
+                // Reinicia las mejoras simuladas al cargar el nivel
+                profile.CanjesUsados = 0;
+
+                Log.LogInfo("[P3-Shop] Inicializando hook gráfico de la tienda. Registrados: " + profile.Puntos + " pts.");
+
+                // Invoca la instanciación e inyección del canvas gráfico
+                ShopCanjePanel.EnsureInstance(profile);
             }
         }
     }
