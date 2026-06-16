@@ -8,7 +8,6 @@ namespace VitaSync
 {
     /// <summary>
     /// Cliente REST del módulo cloud de LifeSync-Games.
-    /// Gestiona autenticación JWT y consulta de saldo físico para construir el perfil.
     /// </summary>
     public class LifeSyncClient : MonoBehaviour
     {
@@ -140,9 +139,11 @@ namespace VitaSync
 
         public void DeductPoints(int amount, Action onSuccess = null)
         {
-            // Placeholder funcional para mantener compatibilidad en P2 sin ejecutar red
-            if (Profile != null) Profile.Puntos -= amount;
-            if (onSuccess != null) onSuccess();
+            if (Profile != null)
+            {
+                Profile.Puntos -= amount;
+            }
+            onSuccess?.Invoke();
         }
 
         internal static string ExtractString(string json, string key)
@@ -194,7 +195,7 @@ namespace VitaSync
             public int CostoHealth { get; private set; }
             public int CostoSpeed { get; private set; }
             public int CanjesUsados { get; set; }
-            public int CanjesMax { get; private set; }
+            public int CanjesMax { get; set; }
 
             public bool PuedeCanjeaMas => CanjesUsados < CanjesMax;
 

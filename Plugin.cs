@@ -1,52 +1,77 @@
 ﻿using BepInEx;
-using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace VitaSync
 {
-    [BepInPlugin("cl.usach.vitasync", "VitaSync", "0.2.0")]
+    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.4.0")]
     public class VitaSyncPlugin : BaseUnityPlugin
     {
-        internal static ManualLogSource Log;
-        internal static VitaSyncPlugin Instance;
-        private static LifeSyncClient _client;
+        public static VitaSyncPlugin Instance { get; private set; }
+        public static BepInEx.Logging.ManualLogSource Log => Instance.Logger;
+
+        private LifeSyncClient.PhysicalProfile _activeProfile;
+        private GameObject _updaterGO;
+
+        // URLs Oficiales del Framework Universitario
+        public const string AUTH_URL = "https://lsg.diinf.usach.cl/lsg-auth/login";
+        public const string AUTH_WHOAMI = "https://lsg.diinf.usach.cl/lsg-auth/whoami";
+        public const string CORE_URL = "https://lsg.diinf.usach.cl/lsg-core-api";
 
         private void Awake()
         {
             Instance = this;
-            Log = Logger;
-            Log.LogInfo("VitaSync 0.2.0 inicializado en modo Prototipo P2.");
 
-            _client = gameObject.AddComponent<LifeSyncClient>();
-            _client.Connect();
-
-            var harmony = new Harmony(Info.Metadata.GUID);
+            Harmony harmony = new Harmony("com.diinf.vitasync");
             harmony.PatchAll();
+
+            SceneManager.sceneLoaded += OnSceneLoaded;
+
+            _updaterGO = new GameObject("VitaSync_SceneMonitor");
+            _updaterGO.AddComponent<SceneMonitor>();
+            DontDestroyOnLoad(_updaterGO);
+
+            Log.LogInfo("VitaSync v0.4.0 (Infraestructura de Red Local) cargado.");
         }
 
-        public static LifeSyncClient.PhysicalProfile GetProfile() => _client?.Profile;
-        public static LifeSyncClient GetClient() => _client;
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            if ((scene.name == "Main" || scene.name == "Reload") && _activeProfile == null)
+            {
+                LoginHUDPanel.Initialize();
+            }
+        }
+
+        public void SetActiveProfile(LifeSyncClient.PhysicalProfile profile) => _activeProfile = profile;
+        public LifeSyncClient.PhysicalProfile GetActiveProfile() => _activeProfile;
 
         [HarmonyPatch(typeof(ShopManager), "ShopInitialize")]
         public static class ShopInitializePatch
         {
             static void Postfix()
             {
-                var profile = GetProfile();
-                if (profile == null || !GetClient().IsAuthenticated)
-                {
-                    Log.LogInfo("[P3-Shop] Esperando perfil activo de LifeSync-Games...");
-                    return;
-                }
-
-                // Reinicia las mejoras simuladas al cargar el nivel
-                profile.CanjesUsados = 0;
-
-                Log.LogInfo("[P3-Shop] Inicializando hook gráfico de la tienda. Registrados: " + profile.Puntos + " pts.");
-
-                // Invoca la instanciación e inyección del canvas gráfico
+                var profile = Instance.GetActiveProfile();
+                if (profile == null) return;
                 ShopCanjePanel.EnsureInstance(profile);
+            }
+        }
+    }
+
+    public class SceneMonitor : MonoBehaviour
+    {
+        private float _checkTimer = 0f;
+        private void Update()
+        {
+            _checkTimer += Time.deltaTime;
+            if (_checkTimer >= 1.5f)
+            {
+                _checkTimer = 0f;
+                ShopManager shopInst = FindObjectOfType<ShopManager>();
+                if (shopInst == null || !shopInst.gameObject.activeInHierarchy)
+                {
+                    ShopCanjePanel.DestroyInstance();
+                }
             }
         }
     }

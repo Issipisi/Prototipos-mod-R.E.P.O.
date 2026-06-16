@@ -3,16 +3,17 @@ using UnityEngine.UI;
 
 namespace VitaSync
 {
-    /// <summary>
-    /// Panel de canje que se despliega en la tienda de R.E.P.O.
-    /// Muestra el balance disponible, costos y maneja los eventos de click.
-    /// </summary>
     public class ShopCanjePanel : MonoBehaviour
     {
         private static ShopCanjePanel _instance;
+        private GameObject _canvasGO;
+        private Text _balanceText;
+        private Text _slotsText;
+        private Button[] _attributeButtons;
+        private Text[] _attributeLabels;
+        private LifeSyncClient.PhysicalProfile _currentProfile;
 
-        // Propiedades de acceso para el Singleton
-        public static ShopCanjePanel Instance => _instance;
+        private static readonly string[] ATTRIBUTE_NAMES = { "Stamina", "Grip", "Health", "Speed" };
 
         public static void EnsureInstance(LifeSyncClient.PhysicalProfile profile)
         {
@@ -22,138 +23,127 @@ namespace VitaSync
                 return;
             }
             GameObject go = new GameObject("VitaSync_ShopPanel");
-            DontDestroyOnLoad(go);
             _instance = go.AddComponent<ShopCanjePanel>();
             _instance.Build(profile);
         }
 
         public static void DestroyInstance()
         {
-            if (_instance == null) return;
-            Destroy(_instance.gameObject);
-            _instance = null;
+            if (_instance != null)
+            {
+                if (_instance._canvasGO != null) Destroy(_instance._canvasGO);
+                Destroy(_instance.gameObject);
+                _instance = null;
+                VitaSyncPlugin.Log.LogInfo("[P4-Shop] Interfaz de la tienda destruida de forma limpia.");
+            }
         }
 
-        // Elementos de la interfaz gráfica
-        private GameObject _canvasGO;
-        private Text _headerText;
-        private Text _balanceText;
-        private Text _slotsText;
-        private Button[] _attributeButtons;
-        private Text[] _attributeLabels;
-
-        private LifeSyncClient.PhysicalProfile _currentProfile;
-        private static readonly string[] ATTRIBUTE_NAMES = { "Stamina", "Grip", "Health", "Speed" };
-
-        private static BepInEx.Logging.ManualLogSource Log => VitaSyncPlugin.Log;
+        private static Font GetFont()
+        {
+            Font f = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            if (f == null)
+            {
+                Font[] fonts = Resources.FindObjectsOfTypeAll<Font>();
+                if (fonts != null && fonts.Length > 0) f = fonts[0];
+            }
+            return f;
+        }
 
         private void Build(LifeSyncClient.PhysicalProfile profile)
         {
             _currentProfile = profile;
 
-            try
+            _canvasGO = new GameObject("VitaSync_CanjeCanvas");
+            Canvas canvas = _canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 3000;
+
+            _canvasGO.AddComponent<CanvasScaler>();
+            _canvasGO.AddComponent<GraphicRaycaster>();
+
+            GameObject panel = new GameObject("RightPanel");
+            panel.transform.SetParent(_canvasGO.transform, false);
+            Image img = panel.AddComponent<Image>();
+            img.color = new Color(0.06f, 0.06f, 0.1f, 0.96f);
+
+            RectTransform rt = panel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(1f, 0.5f);
+            rt.anchorMax = new Vector2(1f, 0.5f);
+            rt.pivot = new Vector2(1f, 0.5f);
+            rt.anchoredPosition = new Vector2(-20f, 0f);
+            rt.sizeDelta = new Vector2(230f, 320f);
+
+            CreateLabel(panel.transform, "LifeSync-Games Store", new Vector2(0f, 130f), 13, Color.cyan);
+            _balanceText = CreateLabel(panel.transform, "", new Vector2(0f, 105f), 11, new Color(0.2f, 1f, 0.4f));
+            _slotsText = CreateLabel(panel.transform, "", new Vector2(0f, 85f), 11, Color.white);
+
+            // Botón manual para cerrar la UI si el jugador lo desea
+            GameObject closeGo = new GameObject("Btn_CloseShop");
+            closeGo.transform.SetParent(panel.transform, false);
+            Image closeImg = closeGo.AddComponent<Image>();
+            closeImg.color = new Color(0.5f, 0.1f, 0.1f);
+            Button closeBtn = closeGo.AddComponent<Button>();
+            RectTransform closeRt = closeGo.GetComponent<RectTransform>();
+            closeRt.sizeDelta = new Vector2(180f, 26f);
+            closeRt.anchoredPosition = new Vector2(0f, -130f);
+            CreateLabel(closeGo.transform, "OCULTAR TIENDA", Vector2.zero, 10, Color.white);
+            closeBtn.onClick.AddListener(DestroyInstance);
+
+            _attributeButtons = new Button[4];
+            _attributeLabels = new Text[4];
+
+            for (int i = 0; i < 4; i++)
             {
-                // Crear el Canvas raíz sobre la pantalla
-                _canvasGO = new GameObject("VitaSync_CanjeCanvas");
-                DontDestroyOnLoad(_canvasGO);
-                Canvas canvas = _canvasGO.AddComponent<Canvas>();
-                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                canvas.sortingOrder = 200;
-                _canvasGO.AddComponent<CanvasScaler>();
-                _canvasGO.AddComponent<GraphicRaycaster>();
+                float yTop = 40f - (i * 42f);
+                int index = i;
 
-                // Crear el contenedor del panel (Fondo oscuro)
-                GameObject panel = CreatePanel(_canvasGO.transform,
-                    new Vector2(1f, 0f),    // Ancla inferior derecha
-                    new Vector2(1f, 0f),    // Pivot
-                    new Vector2(-10f, 10f), // Margen de desfase
-                    new Vector2(220f, 260f));
+                GameObject btnGo = new GameObject("Btn_" + ATTRIBUTE_NAMES[i]);
+                btnGo.transform.SetParent(panel.transform, false);
+                Image btnImg = btnGo.AddComponent<Image>();
+                btnImg.color = new Color(0.12f, 0.16f, 0.24f);
 
-                // Texto del Encabezado
-                _headerText = CreateLabel(panel.transform,
-                    "LifeSync-Games Store",
-                    new Vector2(0f, 1f), new Vector2(1f, 1f),
-                    new Vector2(0f, -30f), new Vector2(0f, 0f),
-                    13, TextAnchor.MiddleCenter, Color.cyan);
+                Button btn = btnGo.AddComponent<Button>();
+                RectTransform btnRt = btnGo.GetComponent<RectTransform>();
+                btnRt.sizeDelta = new Vector2(200f, 34f);
+                btnRt.anchoredPosition = new Vector2(0f, yTop);
 
-                // Texto del Balance de Puntos
-                _balanceText = CreateLabel(panel.transform,
-                    "",
-                    new Vector2(0f, 1f), new Vector2(1f, 1f),
-                    new Vector2(0f, -52f), new Vector2(0f, -32f),
-                    11, TextAnchor.MiddleCenter, new Color(0.2f, 1f, 0.4f));
+                Text lbl = CreateLabel(btnGo.transform, "", Vector2.zero, 11, Color.white);
+                btn.onClick.AddListener(() => OnRedeemClick(index));
 
-                // Texto de Slots Usados
-                _slotsText = CreateLabel(panel.transform,
-                    "",
-                    new Vector2(0f, 1f), new Vector2(1f, 1f),
-                    new Vector2(0f, -70f), new Vector2(0f, -52f),
-                    11, TextAnchor.MiddleCenter, Color.white);
-
-                // Línea divisoria estética
-                CreateLabel(panel.transform,
-                    "────────────────",
-                    new Vector2(0f, 1f), new Vector2(1f, 1f),
-                    new Vector2(0f, -82f), new Vector2(0f, -70f),
-                    10, TextAnchor.MiddleCenter, new Color(0.4f, 0.4f, 0.4f));
-
-                // Inicializar vectores de botones y etiquetas
-                _attributeButtons = new Button[4];
-                _attributeLabels = new Text[4];
-
-                int[] costs = {
-                    profile.CostoStamina,
-                    profile.CostoGrip,
-                    profile.CostoHealth,
-                    profile.CostoSpeed
-                };
-
-                // Construcción iterativa de la botonera
-                for (int i = 0; i < 4; i++)
-                {
-                    float yTop = -88f - (i * 42f);
-                    int index = i; // Captura de índice para la expresión lambda en C# 7.3
-
-                    var targetBtn = CreateAttributeButton(
-                        panel.transform,
-                        ATTRIBUTE_NAMES[i], costs[i],
-                        yTop,
-                        () => OnRedeemClick(index));
-
-                    _attributeButtons[i] = targetBtn.btn;
-                    _attributeLabels[i] = targetBtn.lbl;
-                }
-
-                _canvasGO.SetActive(true);
-                RefreshUI();
-                Log.LogInfo("[P3-UI] Panel de interfaz gráfica construido exitosamente.");
+                _attributeButtons[i] = btn;
+                _attributeLabels[i] = lbl;
             }
-            catch (System.Exception ex)
-            {
-                Log.LogError("[P3-UI] Error crítico construyendo la interfaz: " + ex.Message);
-            }
+
+            RefreshUI();
         }
 
         private void OnRedeemClick(int attributeIndex)
         {
-            if (_currentProfile == null) return;
+            int cost = attributeIndex == 0 ? _currentProfile.CostoStamina :
+                       attributeIndex == 1 ? _currentProfile.CostoGrip :
+                       attributeIndex == 2 ? _currentProfile.CostoHealth : _currentProfile.CostoSpeed;
 
-            // Determinar costo usando estructuras condicionales tradicionales de C# 7.3
-            int selectedCost = 999;
-            if (attributeIndex == 0) selectedCost = _currentProfile.CostoStamina;
-            else if (attributeIndex == 1) selectedCost = _currentProfile.CostoGrip;
-            else if (attributeIndex == 2) selectedCost = _currentProfile.CostoHealth;
-            else if (attributeIndex == 3) selectedCost = _currentProfile.CostoSpeed;
+            if (!_currentProfile.PuedePagar(cost)) return;
 
-            if (!_currentProfile.PuedePagar(selectedCost))
+            // Transmitir mejoras de forma segura a través de la infraestructura del juego original
+            PlayerController controller = PlayerController.instance;
+            if (controller != null && controller.playerAvatarScript != null && PunManager.instance != null)
             {
-                Log.LogWarning("[P3-UI] Intento de canje rechazado. Saldo o slots insuficientes.");
-                return;
+                string steamID = SemiFunc.PlayerGetSteamID(controller.playerAvatarScript);
+                if (!string.IsNullOrEmpty(steamID))
+                {
+                    switch (attributeIndex)
+                    {
+                        case 0: PunManager.instance.UpgradePlayerEnergy(steamID, 1); break;
+                        case 1: PunManager.instance.UpgradePlayerGrabStrength(steamID, 1); break;
+                        case 2: PunManager.instance.UpgradePlayerHealth(steamID, 1); break;
+                        case 3: PunManager.instance.UpgradePlayerSprintSpeed(steamID, 1); break;
+                    }
+                }
             }
 
-            // Simulación del flujo de descuento para el prototipo P3
+            _currentProfile.Puntos -= cost;
             _currentProfile.CanjesUsados++;
-            Log.LogInfo("[P3-UI] Botón presionado de forma exitosa: " + ATTRIBUTE_NAMES[attributeIndex] + ". Procesando evento...");
 
             RefreshUI();
         }
@@ -161,7 +151,6 @@ namespace VitaSync
         public void Refresh(LifeSyncClient.PhysicalProfile profile)
         {
             _currentProfile = profile;
-            if (_canvasGO != null) _canvasGO.SetActive(true);
             RefreshUI();
         }
 
@@ -169,97 +158,45 @@ namespace VitaSync
         {
             if (_currentProfile == null) return;
 
-            _balanceText.text = "Puntos disponibles: " + _currentProfile.Puntos;
-            _slotsText.text = "Mejoras: " + _currentProfile.CanjesUsados + "/" + _currentProfile.CanjesMax;
+            _balanceText.text = "Puntos: " + _currentProfile.Puntos;
+            _slotsText.text = "Canjes: " + _currentProfile.CanjesUsados + "/" + _currentProfile.CanjesMax;
 
-            int[] costs = {
-                _currentProfile.CostoStamina,
-                _currentProfile.CostoGrip,
-                _currentProfile.CostoHealth,
-                _currentProfile.CostoSpeed
-            };
+            int[] costs = { _currentProfile.CostoStamina, _currentProfile.CostoGrip, _currentProfile.CostoHealth, _currentProfile.CostoSpeed };
 
             for (int i = 0; i < 4; i++)
             {
-                bool canAfford = _currentProfile.PuedePagar(costs[i]);
-                _attributeLabels[i].text = ATTRIBUTE_NAMES[i] + "  [" + costs[i] + " pts]";
-                _attributeLabels[i].color = canAfford ? new Color(0.2f, 1f, 0.4f) : new Color(0.5f, 0.5f, 0.5f);
+                bool canAfford = _currentProfile.Puntos >= costs[i] && _currentProfile.CanjesUsados < _currentProfile.CanjesMax;
+                _attributeLabels[i].text = ATTRIBUTE_NAMES[i] + " (" + costs[i] + " pts)";
                 _attributeButtons[i].interactable = canAfford;
             }
         }
 
-        public void Hide()
+        private Text CreateLabel(Transform parent, string text, Vector2 pos, int size, Color col)
         {
-            if (_canvasGO != null) _canvasGO.SetActive(false);
-        }
-
-        private void OnDestroy()
-        {
-            if (_canvasGO != null) Destroy(_canvasGO);
-        }
-
-        // ── MÉTODOS AUXILIARES (HELPERS) DE CONSTRUCCIÓN GRÁFICA ──
-
-        private static GameObject CreatePanel(Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 anchoredPos, Vector2 sizeDelta)
-        {
-            GameObject go = new GameObject("PanelBackground");
+            GameObject go = new GameObject("Label");
             go.transform.SetParent(parent, false);
-            Image img = go.AddComponent<Image>();
-            img.color = new Color(0.05f, 0.05f, 0.1f, 0.94f); // Fondo azul marino traslúcido
+            Text t = go.AddComponent<Text>();
+            t.font = GetFont();
+            t.text = text;
+            t.fontSize = size;
+            t.color = col;
+            t.alignment = TextAnchor.MiddleCenter;
             RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = anchorMin;
-            rt.anchorMax = anchorMax;
-            rt.pivot = anchorMin;
-            rt.anchoredPosition = anchoredPos;
-            rt.sizeDelta = sizeDelta;
-            return go;
+            rt.anchoredPosition = pos;
+            rt.sizeDelta = new Vector2(210f, 20f);
+            return t;
         }
 
-        private static Text CreateLabel(Transform parent, string text, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, int fontSize, TextAnchor anchor, Color color)
+        
+        private void Update()
         {
-            GameObject go = new GameObject("UILabel");
-            go.transform.SetParent(parent, false);
-            Text lbl = go.AddComponent<Text>();
-            lbl.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            lbl.fontSize = fontSize;
-            lbl.color = color;
-            lbl.alignment = anchor;
-            lbl.text = text;
-            RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = anchorMin;
-            rt.anchorMax = anchorMax;
-            rt.offsetMin = offsetMin;
-            rt.offsetMax = offsetMax;
-            return lbl;
+            // Forzar visibilidad del mouse mientras se visualiza la tienda de canjes de VitaSync
+            if (_canvasGO != null && _canvasGO.activeInHierarchy)
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
         }
 
-        // Estructura de retorno compatible con C# 7.3 para el empaquetado del botón
-        private struct ButtonPair
-        {
-            public Button btn;
-            public Text lbl;
-            public ButtonPair(Button b, Text l) { btn = b; lbl = l; }
-        }
-
-        private static ButtonPair CreateAttributeButton(Transform parent, string name, int cost, float yTop, UnityEngine.Events.UnityAction onClick)
-        {
-            GameObject go = new GameObject("Btn_" + name);
-            go.transform.SetParent(parent, false);
-            Image img = go.AddComponent<Image>();
-            img.color = new Color(0.1f, 0.15f, 0.25f, 0.95f);
-            Button btn = go.AddComponent<Button>();
-            btn.onClick.AddListener(onClick);
-
-            RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = new Vector2(0.05f, 1f);
-            rt.anchorMax = new Vector2(0.95f, 1f);
-            rt.pivot = new Vector2(0.5f, 1f);
-            rt.anchoredPosition = new Vector2(0f, yTop);
-            rt.sizeDelta = new Vector2(0f, 34f);
-
-            Text lbl = CreateLabel(go.transform, name + "  [" + cost + " pts]", Vector2.zero, Vector2.one, new Vector2(4f, 2f), new Vector2(-4f, -2f), 11, TextAnchor.MiddleCenter, new Color(0.2f, 1f, 0.4f));
-
-            return new ButtonPair(btn, lbl);
-        }
     }
 }
