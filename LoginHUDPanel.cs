@@ -88,7 +88,7 @@ namespace VitaSync
             _usernameInput = CreateInputField(panel.transform, "Usuario", "Ingrese su correo...", 45f);
             _passwordInput = CreateInputField(panel.transform, "Contraseña", "Ingrese contraseña...", -10f, true);
 
-            _statusText = CreateLabel(panel.transform, "Inicie sesión en perfil LSG", new Vector2(0f, -55f), 11, Color.gray);
+            _statusText = CreateLabel(panel.transform, "Inicie sesión en perfil LifeSync-Games", new Vector2(0f, -55f), 11, Color.gray);
 
             GameObject btnGo = new GameObject("BtnSubmit");
             btnGo.transform.SetParent(panel.transform, false);
@@ -192,7 +192,7 @@ namespace VitaSync
                     var realProfile = new LifeSyncClient.PhysicalProfile();
                     realProfile.Puntos = puntosReales;
                     realProfile.CanjesUsados = 0;
-                    realProfile.CanjesMax = puntosReales >= 60 ? 4 : puntosReales >= 25 ? 2 : 1;
+                    realProfile.CanjesMax = 2;  // Forzado estrictamente a máximo 2 canjes por nivel laboral/ronda
 
                     VitaSyncPlugin.Instance.SetActiveProfile(realProfile);
                     VitaSyncPlugin.Log.LogInfo($"[LSG] Login exitoso. Balance físico asignado: {puntosReales}");

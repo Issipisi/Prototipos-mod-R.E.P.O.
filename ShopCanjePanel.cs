@@ -1,5 +1,8 @@
-﻿using UnityEngine;
+﻿using System;
+using System.Collections;
+using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.Networking;
 
 namespace VitaSync
 {
@@ -77,7 +80,6 @@ namespace VitaSync
             _balanceText = CreateLabel(panel.transform, "", new Vector2(0f, 105f), 11, new Color(0.2f, 1f, 0.4f));
             _slotsText = CreateLabel(panel.transform, "", new Vector2(0f, 85f), 11, Color.white);
 
-            // Botón manual para cerrar la UI si el jugador lo desea
             GameObject closeGo = new GameObject("Btn_CloseShop");
             closeGo.transform.SetParent(panel.transform, false);
             Image closeImg = closeGo.AddComponent<Image>();
@@ -125,7 +127,7 @@ namespace VitaSync
 
             if (!_currentProfile.PuedePagar(cost)) return;
 
-            // Transmitir mejoras de forma segura a través de la infraestructura del juego original
+            // Transmitir mejoras a la infraestructura interna del juego original
             PlayerController controller = PlayerController.instance;
             if (controller != null && controller.playerAvatarScript != null && PunManager.instance != null)
             {
@@ -142,8 +144,12 @@ namespace VitaSync
                 }
             }
 
+            // Aplicar descuento local inmediato en memoria
             _currentProfile.Puntos -= cost;
             _currentProfile.CanjesUsados++;
+
+            // --- NUEVO: EJECUTAR TRANSACCIÓN REAL HACIA EL BACKEND DE LA USACH ---
+            SincronizarGastoConBackend(cost);
 
             RefreshUI();
         }
@@ -187,10 +193,8 @@ namespace VitaSync
             return t;
         }
 
-        
         private void Update()
         {
-            // Forzar visibilidad del mouse mientras se visualiza la tienda de canjes de VitaSync
             if (_canvasGO != null && _canvasGO.activeInHierarchy)
             {
                 Cursor.lockState = CursorLockMode.None;
@@ -198,5 +202,62 @@ namespace VitaSync
             }
         }
 
+        // --- SISTEMA DE COMUNICACIÓN ASÍNCRONA LSG USACH ---
+        private void SincronizarGastoConBackend(int puntosRestados)
+        {
+            // Extraer de forma segura las variables de sesión del LoginHUDPanel usando Reflection simple
+            string token = null;
+            int playerId = -1;
+
+            var loginHUDType = Type.GetType("VitaSync.LoginHUDPanel, VitaSync");
+            if (loginHUDType != null)
+            {
+                var instanceField = loginHUDType.GetField("_instance", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                object hudInst = instanceField?.GetValue(null);
+                if (hudInst != null)
+                {
+                    var tokenField = loginHUDType.GetField("_bearerToken", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                    var idField = loginHUDType.GetField("_playerId", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+                    token = tokenField?.GetValue(hudInst) as string;
+                    playerId = idField != null ? (int)idField.GetValue(hudInst) : -1;
+                }
+            }
+
+            if (string.IsNullOrEmpty(token) || playerId < 0)
+            {
+                VitaSyncPlugin.Log.LogWarning("[LSG] Sincronización omitida: Faltan credenciales de sesión activa.");
+                return;
+            }
+
+            StartCoroutine(EnviarTransaccionNegativa(playerId, token, puntosRestados));
+        }
+
+        private IEnumerator EnviarTransaccionNegativa(int playerId, string token, int cantidad)
+        {
+            // Endpoint estándar de transacciones para la infraestructura de LifeSync
+            string url = $"{VitaSyncPlugin.CORE_URL}/players/{playerId}/points/dimensions/2/transactions";
+
+            WWWForm form = new WWWForm();
+            form.AddField("value", -cantidad); // El valor negativo impacta restando el balance global en la BD
+            form.AddField("description", "Mejora VitaSync en R.E.P.O.");
+
+            using (var req = UnityWebRequest.Post(url, form))
+            {
+                req.SetRequestHeader("Authorization", $"Bearer {token}");
+                req.SetRequestHeader("Accept", "application/json");
+
+                yield return req.SendWebRequest();
+
+                if (req.result == UnityWebRequest.Result.Success)
+                {
+                    VitaSyncPlugin.Log.LogInfo($"[LSG] Base de datos sincronizada con éxito. Servidor restó: {cantidad} pts.");
+                }
+                else
+                {
+                    VitaSyncPlugin.Log.LogError($"[LSG] Fallo al impactar balance en el servidor Core: {req.error}");
+                }
+            }
+        }
     }
 }

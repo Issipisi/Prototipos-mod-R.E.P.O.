@@ -37,9 +37,17 @@ namespace VitaSync
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
+            // 1. Inicializar panel si entramos al menú principal o recarga
             if ((scene.name == "Main" || scene.name == "Reload") && _activeProfile == null)
             {
                 LoginHUDPanel.Initialize();
+            }
+
+            // 2. DETECCIÓN DE NUEVO NIVEL: Si cambia a un nivel de juego/tienda, reseteamos los canjes por ronda
+            if (_activeProfile != null && scene.name.Contains("Level"))
+            {
+                _activeProfile.CanjesUsados = 0;
+                Log.LogInfo($"[VitaSync] Cambio de nivel detectado ({scene.name}). Canjes restablecidos a 0/2.");
             }
         }
 
