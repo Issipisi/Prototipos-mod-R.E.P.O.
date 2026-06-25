@@ -4,3 +4,4 @@ Prototipo 2 : Construir la representación interna del perfil físico de LSG don
 Prototipo 3 : Diseñar UI nativa dentro de R.E.P.O. para canjear puntos en Tienda mediante LSG
 Prototipo 4 : Implementar HUD de autenticación y realizar ajustes a Canje en tienda
 Prototipo 5 : Se crea SessionManager y se realiza conexión a módulo cloud de LSG para descontar puntos
+Prototipo 6 : Se crea TokenRefresher y se consolida la estabilidad del Login y casos de cierre e inicio de sesión
