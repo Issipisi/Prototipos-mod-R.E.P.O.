@@ -7,9 +7,9 @@ using UnityEngine.Networking;
 namespace VitaSync
 {
     /// <summary>
-    /// Panel de canje LS-G en la tienda nativa de R.E.P.O.
-    /// Se despliega exclusivamente en escenas Level - Shop [nombre].
-    /// Aplica upgrades vía PunManager y descuenta puntos en el cloud.
+    /// Panel de canje LSG en la tienda nativa de R.E.P.O.
+    /// P6: añade botón "Cerrar Sesión LSG" que invoca SessionManager.Clear(),
+    /// destruye el panel y permite re-autenticarse al volver al menú.
     /// </summary>
     public class ShopCanjePanel : MonoBehaviour
     {
@@ -48,7 +48,7 @@ namespace VitaSync
             Destroy(_instance.gameObject);
             _instance = null;
             VitaSyncPlugin.Log.LogInfo(
-                "[P5-Shop] Panel de canje destruido de forma limpia.");
+                "[Shop] Panel de canje destruido de forma limpia.");
         }
 
         // ── CONSTRUCCIÓN ──────────────────────────────────────────────
@@ -65,7 +65,7 @@ namespace VitaSync
             _canvasGO.AddComponent<CanvasScaler>();
             _canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Panel derecho
+            // Panel lateral derecho
             GameObject panel = new GameObject("RightPanel");
             panel.transform.SetParent(_canvasGO.transform, false);
             panel.AddComponent<Image>().color =
@@ -76,28 +76,16 @@ namespace VitaSync
             rt.anchorMax = new Vector2(1f, 0.5f);
             rt.pivot = new Vector2(1f, 0.5f);
             rt.anchoredPosition = new Vector2(-20f, 0f);
-            rt.sizeDelta = new Vector2(230f, 320f);
+            rt.sizeDelta = new Vector2(230f, 360f);   // +40 px para logout
 
             CreateLabel(panel.transform, "LifeSync-Games Store",
-                new Vector2(0f, 130f), 13, Color.cyan);
+                new Vector2(0f, 148f), 13, Color.cyan);
 
             _balanceText = CreateLabel(panel.transform, "",
-                new Vector2(0f, 105f), 11, new Color(0.2f, 1f, 0.4f));
+                new Vector2(0f, 124f), 11, new Color(0.2f, 1f, 0.4f));
 
             _slotsText = CreateLabel(panel.transform, "",
-                new Vector2(0f, 85f), 11, Color.white);
-
-            // Botón cerrar
-            GameObject closeGo = new GameObject("Btn_Close");
-            closeGo.transform.SetParent(panel.transform, false);
-            closeGo.AddComponent<Image>().color = new Color(0.5f, 0.1f, 0.1f);
-            Button closeBtn = closeGo.AddComponent<Button>();
-            RectTransform closeRt = closeGo.GetComponent<RectTransform>();
-            closeRt.sizeDelta = new Vector2(180f, 26f);
-            closeRt.anchoredPosition = new Vector2(0f, -130f);
-            CreateLabel(closeGo.transform,
-                "OCULTAR TIENDA", Vector2.zero, 10, Color.white);
-            closeBtn.onClick.AddListener(DestroyInstance);
+                new Vector2(0f, 104f), 11, Color.white);
 
             // Botones de atributo
             _attributeButtons = new Button[4];
@@ -105,7 +93,7 @@ namespace VitaSync
 
             for (int i = 0; i < 4; i++)
             {
-                float yPos = 40f - (i * 42f);
+                float yPos = 58f - (i * 42f);
                 int idx = i;
 
                 GameObject btnGo = new GameObject("Btn_" + ATTR_NAMES[i]);
@@ -127,11 +115,55 @@ namespace VitaSync
                 _attributeLabels[i] = lbl;
             }
 
+            // Botón OCULTAR TIENDA
+            GameObject closeGo = new GameObject("Btn_Close");
+            closeGo.transform.SetParent(panel.transform, false);
+            closeGo.AddComponent<Image>().color = new Color(0.5f, 0.1f, 0.1f);
+            Button closeBtn = closeGo.AddComponent<Button>();
+            RectTransform closeRt = closeGo.GetComponent<RectTransform>();
+            closeRt.sizeDelta = new Vector2(180f, 26f);
+            closeRt.anchoredPosition = new Vector2(0f, -112f);
+            CreateLabel(closeGo.transform,
+                "OCULTAR TIENDA", Vector2.zero, 10, Color.white);
+            closeBtn.onClick.AddListener(DestroyInstance);
+
+            // Botón CERRAR SESIÓN LSG  ←  nuevo en P6
+            GameObject logoutGo = new GameObject("Btn_Logout");
+            logoutGo.transform.SetParent(panel.transform, false);
+            logoutGo.AddComponent<Image>().color =
+                new Color(0.35f, 0.12f, 0.05f);
+            Button logoutBtn = logoutGo.AddComponent<Button>();
+            RectTransform logoutRt = logoutGo.GetComponent<RectTransform>();
+            logoutRt.sizeDelta = new Vector2(180f, 26f);
+            logoutRt.anchoredPosition = new Vector2(0f, -144f);
+            CreateLabel(logoutGo.transform,
+                "CERRAR SESIÓN LSG", Vector2.zero, 10,
+                new Color(1f, 0.6f, 0.4f));
+            logoutBtn.onClick.AddListener(OnLogoutClick);
+
             RefreshUI();
-            VitaSyncPlugin.Log.LogInfo("[P5-Shop] Panel de canje construido.");
+            VitaSyncPlugin.Log.LogInfo("[Shop] Panel de canje construido (P6).");
         }
 
-        // ── LÓGICA DE CANJE ───────────────────────────────────────────
+        // ── LOGOUT ────────────────────────────────────────────────────
+        private void OnLogoutClick()
+        {
+            VitaSyncPlugin.Log.LogInfo(
+                "[Shop] Cierre de sesión solicitado por el jugador.");
+
+            // Limpiar estado global
+            SessionManager.Clear();
+            VitaSyncPlugin.Instance.SetActiveProfile(null);
+
+            // Destruir el panel
+            DestroyInstance();
+
+            VitaSyncPlugin.Log.LogInfo(
+                "[Shop] Sesión cerrada. El HUD de login se desplegará " +
+                "al volver al menú principal.");
+        }
+
+        // ── CANJE ─────────────────────────────────────────────────────
         private void OnRedeemClick(int idx)
         {
             if (_profile == null) return;
@@ -151,7 +183,7 @@ namespace VitaSync
                 return;
             }
 
-            // Aplicar upgrade vía PunManager (sincroniza en multijugador)
+            // Aplicar upgrade vía PunManager (sincroniza multijugador)
             PlayerController ctrl = PlayerController.instance;
             if (ctrl != null && ctrl.playerAvatarScript != null &&
                 PunManager.instance != null)
@@ -164,21 +196,17 @@ namespace VitaSync
                     switch (idx)
                     {
                         case 0:
-                            PunManager.instance.UpgradePlayerEnergy(
-                                steamID, 1);
-                            break;
+                            PunManager.instance
+                            .UpgradePlayerEnergy(steamID, 1); break;
                         case 1:
-                            PunManager.instance.UpgradePlayerGrabStrength(
-                                steamID, 1);
-                            break;
+                            PunManager.instance
+                            .UpgradePlayerGrabStrength(steamID, 1); break;
                         case 2:
-                            PunManager.instance.UpgradePlayerHealth(
-                                steamID, 1);
-                            break;
+                            PunManager.instance
+                            .UpgradePlayerHealth(steamID, 1); break;
                         case 3:
-                            PunManager.instance.UpgradePlayerSprintSpeed(
-                                steamID, 1);
-                            break;
+                            PunManager.instance
+                            .UpgradePlayerSprintSpeed(steamID, 1); break;
                     }
                     VitaSyncPlugin.Log.LogInfo(
                         "[Shop] Upgrade aplicado: " + ATTR_NAMES[idx] +
@@ -188,22 +216,20 @@ namespace VitaSync
             else
             {
                 VitaSyncPlugin.Log.LogWarning(
-                    "[Shop] No se pudo aplicar upgrade: " +
-                    "PlayerController o PunManager no disponibles.");
+                    "[Shop] PlayerController o PunManager no disponibles.");
             }
 
             // Descuento local inmediato
             _profile.Puntos -= cost;
             _profile.CanjesUsados++;
 
-            // Descuento en el cloud (asíncrono, no bloquea la UI)
+            // Descuento en el cloud (asíncrono)
             if (SessionManager.IsActive)
             {
                 StartCoroutine(EnviarDescuento(
                     SessionManager.PlayerId,
                     SessionManager.BearerToken,
-                    cost,
-                    ATTR_NAMES[idx]));
+                    cost, ATTR_NAMES[idx]));
             }
             else
             {
@@ -218,11 +244,9 @@ namespace VitaSync
         private IEnumerator EnviarDescuento(
             int playerId, string token, int cantidad, string atributo)
         {
-            // CORRECCIÓN CONTRATO: Endpoint POST verificado de ajuste manual de puntos
-            string url = VitaSyncPlugin.CORE_URL + "/players/" + playerId + "/points/adjust";
+            string url = VitaSyncPlugin.CORE_URL +
+                         "/players/" + playerId + "/points/adjust";
 
-            // Construcción manual del JSON crudo para evitar dependencias externas de librerías
-            // Dimensión: 2 (Físico), Dirección: DEBIT (Resta), Videogame: 22 (REPO)
             string jsonBody = "{" +
                 "\"point_dimension_id\":2," +
                 "\"direction\":\"DEBIT\"," +
@@ -233,10 +257,9 @@ namespace VitaSync
 
             using (UnityWebRequest req = new UnityWebRequest(url, "POST"))
             {
-                byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
-                req.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                byte[] raw = Encoding.UTF8.GetBytes(jsonBody);
+                req.uploadHandler = new UploadHandlerRaw(raw);
                 req.downloadHandler = new DownloadHandlerBuffer();
-
                 req.SetRequestHeader("Authorization", "Bearer " + token);
                 req.SetRequestHeader("Content-Type", "application/json");
                 req.SetRequestHeader("Accept", "application/json");
@@ -247,14 +270,15 @@ namespace VitaSync
                 if (req.result == UnityWebRequest.Result.Success)
                 {
                     VitaSyncPlugin.Log.LogInfo(
-                        "[LSG] Cloud ajustado con éxito (/points/adjust). Descontados: " +
-                        cantidad + " pts para " + atributo + " (Game 22). Respuesta: " + req.downloadHandler.text);
+                        "[LSG] Cloud ajustado. Descontados: " +
+                        cantidad + " pts (" + atributo + "). " +
+                        req.downloadHandler.text);
                 }
                 else
                 {
                     VitaSyncPlugin.Log.LogError(
-                        "[LSG] Error al ajustar puntos en cloud (" + req.responseCode + "): " +
-                        req.error + " | Payload enviado: " + jsonBody);
+                        "[LSG] Error al ajustar puntos (" +
+                        req.responseCode + "): " + req.error);
                 }
             }
         }

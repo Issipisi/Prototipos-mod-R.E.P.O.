@@ -7,9 +7,13 @@ using UnityEngine.Networking;
 namespace VitaSync
 {
     /// <summary>
-    /// Panel de autenticación LS-G. Se despliega en el menú principal.
-    /// Tras login exitoso guarda las credenciales en SessionManager
-    /// y se destruye a sí mismo.
+    /// Panel de autenticación LS-G.
+    /// P6: se inyecta mediante Postfix sobre MenuPageMain.Start() en lugar
+    /// de OnSceneLoaded, garantizando que el menú esté completamente
+    /// estable antes de construir los InputFields.
+    /// Añade botón "Ocultar" y manejo de errores con reintento infinito:
+    /// ante credenciales incorrectas el panel permanece en pantalla,
+    /// limpia el campo de contraseña y muestra un mensaje de error.
     /// </summary>
     public class LoginHUDPanel : MonoBehaviour
     {
@@ -20,12 +24,14 @@ namespace VitaSync
         private InputField _passwordInput;
         private Text _statusText;
         private Button _loginButton;
+        private bool _loginInProgress = false;
 
+        // ── CICLO DE VIDA ─────────────────────────────────────────────
         public static void Initialize()
         {
             if (_instance != null) return;
 
-            // EventSystem necesario para que InputField funcione
+            // EventSystem requerido para InputField
             if (FindObjectOfType<EventSystem>() == null)
             {
                 GameObject es = new GameObject("VitaSync_EventSystem");
@@ -48,30 +54,37 @@ namespace VitaSync
             _instance = null;
         }
 
+        // ── INPUT ─────────────────────────────────────────────────────
         private void Update()
         {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-
-            if (Input.GetKeyDown(KeyCode.Tab))
+            // Solo gestionar cursor cuando el panel está visible
+            if (_canvasGO != null && _canvasGO.activeSelf)
             {
-                if (_usernameInput != null && _usernameInput.isFocused)
-                    _passwordInput?.Select();
-                else if (_passwordInput != null && _passwordInput.isFocused)
-                    _usernameInput?.Select();
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
             }
 
-            if (Input.GetKeyDown(KeyCode.Return) ||
-                Input.GetKeyDown(KeyCode.KeypadEnter))
+            if (!_loginInProgress)
             {
-                HandleLoginSubmit();
+                if (Input.GetKeyDown(KeyCode.Tab))
+                {
+                    if (_usernameInput != null && _usernameInput.isFocused)
+                        _passwordInput?.Select();
+                    else if (_passwordInput != null && _passwordInput.isFocused)
+                        _usernameInput?.Select();
+                }
+
+                if (Input.GetKeyDown(KeyCode.Return) ||
+                    Input.GetKeyDown(KeyCode.KeypadEnter))
+                {
+                    HandleLoginSubmit();
+                }
             }
         }
 
+        // ── CONSTRUCCIÓN UI ───────────────────────────────────────────
         private static Font GetFont()
-        {
-            return Resources.GetBuiltinResource<Font>("Arial.ttf");
-        }
+            => Resources.GetBuiltinResource<Font>("Arial.ttf");
 
         private void BuildUI()
         {
@@ -87,56 +100,90 @@ namespace VitaSync
             // Panel central
             GameObject panel = new GameObject("CenterPanel");
             panel.transform.SetParent(_canvasGO.transform, false);
-            Image bg = panel.AddComponent<Image>();
-            bg.color = new Color(0.09f, 0.1f, 0.13f, 0.99f);
+            panel.AddComponent<Image>().color =
+                new Color(0.09f, 0.1f, 0.13f, 0.99f);
 
             RectTransform panelRt = panel.GetComponent<RectTransform>();
             panelRt.anchorMin = new Vector2(0.5f, 0.5f);
             panelRt.anchorMax = new Vector2(0.5f, 0.5f);
-            panelRt.sizeDelta = new Vector2(340f, 260f);
+            panelRt.sizeDelta = new Vector2(340f, 270f);
 
             CreateLabel(panel.transform,
                 "VITASYNC — AUTENTICACIÓN LSG",
-                new Vector2(0f, 100f), 13, Color.cyan);
+                new Vector2(0f, 108f), 13, Color.cyan);
 
             _usernameInput = CreateInputField(
                 panel.transform, "Usuario",
-                "Ingrese su correo...", 45f);
+                "Ingrese su correo...", 53f);
 
             _passwordInput = CreateInputField(
                 panel.transform, "Contraseña",
-                "Ingrese contraseña...", -10f, isPass: true);
+                "Ingrese contraseña...", 8f, isPass: true);
 
             _statusText = CreateLabel(panel.transform,
                 "Inicie sesión con su cuenta LifeSync-Games",
-                new Vector2(0f, -55f), 11, Color.gray);
+                new Vector2(0f, -42f), 11, Color.gray);
 
-            GameObject btnGo = new GameObject("BtnSubmit");
-            btnGo.transform.SetParent(panel.transform, false);
-            btnGo.AddComponent<Image>().color = new Color(0.15f, 0.45f, 0.25f);
-            _loginButton = btnGo.AddComponent<Button>();
+            // Botón INICIAR SESIÓN
+            GameObject btnLogin = CreateButton(
+                panel.transform,
+                "BtnSubmit",
+                "INICIAR SESIÓN",
+                new Vector2(0f, -86f),
+                new Vector2(160f, 34f),
+                new Color(0.15f, 0.45f, 0.25f));
+            btnLogin.GetComponent<Button>().onClick
+                .AddListener(HandleLoginSubmit);
+            _loginButton = btnLogin.GetComponent<Button>();
 
-            RectTransform btnRt = btnGo.GetComponent<RectTransform>();
-            btnRt.sizeDelta = new Vector2(160f, 34f);
-            btnRt.anchoredPosition = new Vector2(0f, -95f);
+            // Botón OCULTAR  ←  nuevo en P6
+            GameObject btnHide = CreateButton(
+                panel.transform,
+                "BtnHide",
+                "OCULTAR",
+                new Vector2(0f, -122f),
+                new Vector2(85f, 22f),
+                new Color(0.25f, 0.25f, 0.28f));
+            btnHide.GetComponent<Button>().onClick.AddListener(HidePanel);
+        }
 
-            CreateLabel(btnGo.transform,
-                "INICIAR SESIÓN", Vector2.zero, 11, Color.white);
+        // ── LÓGICA ────────────────────────────────────────────────────
+        private void HidePanel()
+        {
+            VitaSyncPlugin.Log.LogInfo(
+                "[Login] Panel descartado por el jugador. " +
+                "Modo pasivo activo. Se redesplegará al volver al menú.");
 
-            _loginButton.onClick.AddListener(HandleLoginSubmit);
+            // Devolver el cursor al control del juego antes de destruir
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+
+            // Destruir completamente en lugar de ocultar:
+            // así _instance queda null y MenuPageMainStartPatch
+            // puede volver a crear el panel al regresar al lobby.
+            if (_canvasGO != null) Destroy(_canvasGO);
+            Destroy(gameObject);
+            _instance = null;
         }
 
         private void HandleLoginSubmit()
         {
+            if (_loginInProgress) return;
+
             if (string.IsNullOrEmpty(_usernameInput.text) ||
                 string.IsNullOrEmpty(_passwordInput.text))
             {
                 SetStatus("Complete ambos campos.", Color.red);
                 return;
             }
+
             SetStatus("Conectando con lsg.diinf.usach.cl...", Color.yellow);
+            _loginInProgress = true;
+            _loginButton.interactable = false;
+
             StartCoroutine(LoginFlow(
-                _usernameInput.text, _passwordInput.text));
+                _usernameInput.text.Trim(),
+                _passwordInput.text));
         }
 
         private IEnumerator LoginFlow(string user, string pass)
@@ -159,18 +206,20 @@ namespace VitaSync
                 req.timeout = 10;
                 yield return req.SendWebRequest();
 
-                if (req.result != UnityWebRequest.Result.Success)
+                if (req.result != UnityWebRequest.Result.Success ||
+                    req.responseCode == 401 || req.responseCode == 400)
                 {
-                    SetStatus("Credenciales incorrectas o error de red.",
-                              Color.red);
+                    // ── ERROR RECUPERABLE: panel permanece abierto ────
+                    OnLoginError("Credenciales incorrectas. Intente nuevamente.");
                     yield break;
                 }
+
                 token = ExtractJson(req.downloadHandler.text, "access_token");
             }
 
             if (string.IsNullOrEmpty(token))
             {
-                SetStatus("Error en respuesta del servidor.", Color.red);
+                OnLoginError("Error en respuesta del servidor.");
                 yield break;
             }
 
@@ -195,8 +244,7 @@ namespace VitaSync
 
             if (playerId < 0)
             {
-                SetStatus("No se pudo recuperar el ID del jugador.",
-                          Color.red);
+                OnLoginError("No se pudo recuperar el ID del jugador.");
                 yield break;
             }
 
@@ -213,17 +261,18 @@ namespace VitaSync
 
                 if (req.result != UnityWebRequest.Result.Success)
                 {
-                    SetStatus("Error al obtener balance.", Color.red);
+                    OnLoginError("Error al obtener balance físico.");
                     yield break;
                 }
 
                 int puntos = ParseBalance(req.downloadHandler.text, "2");
 
-                // Guardar sesión en SessionManager (persiste tras destruir este panel)
+                // Guardar sesión en SessionManager (persiste al destruir panel)
                 SessionManager.Save(token, playerId);
 
                 // Construir perfil y registrarlo en el plugin
-                var profile = new LifeSyncClient.PhysicalProfile();
+                LifeSyncClient.PhysicalProfile profile =
+                    new LifeSyncClient.PhysicalProfile();
                 profile.Puntos = puntos;
                 profile.CanjesUsados = 0;
                 profile.CanjesMax = 2;
@@ -242,6 +291,21 @@ namespace VitaSync
             _instance = null;
         }
 
+        /// <summary>
+        /// Reacción ante error recuperable: el panel permanece visible,
+        /// el campo de contraseña se limpia y se reactivan los controles.
+        /// El jugador puede reintentar sin reiniciar el juego.
+        /// </summary>
+        private void OnLoginError(string mensaje)
+        {
+            SetStatus(mensaje, Color.red);
+            _passwordInput.text = "";
+            _loginInProgress = false;
+            _loginButton.interactable = true;
+            _passwordInput.Select();
+            VitaSyncPlugin.Log.LogWarning("[Login] Error recuperable: " + mensaje);
+        }
+
         // ── HELPERS ───────────────────────────────────────────────────
         private void SetStatus(string msg, Color col)
         {
@@ -251,27 +315,7 @@ namespace VitaSync
         }
 
         private static string ExtractJson(string json, string key)
-        {
-            string k = "\"" + key + "\"";
-            int ki = json.IndexOf(k, System.StringComparison.Ordinal);
-            if (ki < 0) return null;
-            int ci = json.IndexOf(':', ki + k.Length);
-            if (ci < 0) return null;
-            int vs = ci + 1;
-            while (vs < json.Length && char.IsWhiteSpace(json[vs])) vs++;
-            if (vs >= json.Length) return null;
-            if (json[vs] == '"')
-            {
-                int ve = json.IndexOf('"', vs + 1);
-                return ve < 0 ? null : json.Substring(vs + 1, ve - vs - 1);
-            }
-            int end = vs;
-            while (end < json.Length &&
-                   json[end] != ',' &&
-                   json[end] != '}' &&
-                   json[end] != ']') end++;
-            return json.Substring(vs, end - vs).Trim();
-        }
+            => LifeSyncClient.ExtractString(json, key);
 
         private static int ParseBalance(string json, string dimId)
         {
@@ -311,6 +355,20 @@ namespace VitaSync
             rt.anchoredPosition = pos;
             rt.sizeDelta = new Vector2(320f, 25f);
             return t;
+        }
+
+        private GameObject CreateButton(Transform parent, string name,
+            string label, Vector2 pos, Vector2 size, Color color)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.AddComponent<Image>().color = color;
+            go.AddComponent<Button>();
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.sizeDelta = size;
+            rt.anchoredPosition = pos;
+            CreateLabel(go.transform, label, Vector2.zero, 11, Color.white);
+            return go;
         }
 
         private InputField CreateInputField(Transform parent, string name,

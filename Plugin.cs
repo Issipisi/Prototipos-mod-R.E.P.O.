@@ -5,7 +5,7 @@ using UnityEngine.SceneManagement;
 
 namespace VitaSync
 {
-    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.5.0")]
+    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.6.0")]
     public class VitaSyncPlugin : BaseUnityPlugin
     {
         public static VitaSyncPlugin Instance { get; private set; }
@@ -17,6 +17,7 @@ namespace VitaSync
         // URLs del framework LS-G
         public const string AUTH_URL = "https://lsg.diinf.usach.cl/lsg-auth/login";
         public const string AUTH_WHOAMI = "https://lsg.diinf.usach.cl/lsg-auth/whoami";
+        public const string AUTH_REFRESH = "https://lsg.diinf.usach.cl/lsg-auth/token/refresh";
         public const string CORE_URL = "https://lsg.diinf.usach.cl/lsg-core-api";
 
         private void Awake()
@@ -32,7 +33,7 @@ namespace VitaSync
             _monitorGO.AddComponent<SceneMonitor>();
             DontDestroyOnLoad(_monitorGO);
 
-            Log.LogInfo("VitaSync v0.5.0 cargado.");
+            Log.LogInfo("VitaSync v0.6.0 cargado.");
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -40,35 +41,15 @@ namespace VitaSync
             Log.LogInfo("[VitaSync] Escena cargada: " + scene.name
                         + " (modo: " + mode + ")");
 
-            // Ignorar la escena base Main cuando se carga de forma aditiva
-            // junto a un nivel, ya que no representa un cambio de estado real
+            // La escena Main aditiva es ruido arquitectónico de R.E.P.O.: ignorar
             if (scene.name == "Main" && mode == LoadSceneMode.Additive)
             {
                 Log.LogInfo("[VitaSync] Main aditiva ignorada.");
                 return;
             }
 
-            bool esMenu = scene.name == "Main" || scene.name == "Reload";
             bool esTienda = scene.name.StartsWith("Level - Shop");
             bool esNivel = scene.name.StartsWith("Level") && !esTienda;
-
-            // ── MENÚ PRINCIPAL ────────────────────────────────────────
-            if (esMenu)
-            {
-                ShopCanjePanel.DestroyInstance();
-
-                if (!SessionManager.IsActive)
-                {
-                    Log.LogInfo("[VitaSync] Menú detectado. Mostrando login.");
-                    LoginHUDPanel.Initialize();
-                }
-                else
-                {
-                    Log.LogInfo("[VitaSync] Menú detectado. " +
-                                "Sesión activa, login omitido.");
-                }
-                return;
-            }
 
             // ── NIVEL DE EXPLORACIÓN ──────────────────────────────────
             if (esNivel)
@@ -92,22 +73,46 @@ namespace VitaSync
                     _activeProfile.CanjesUsados = 0;
                     Log.LogInfo("[VitaSync] Canjes restablecidos a 0/2.");
                 }
-                // El panel lo construye ShopInitializePatch via SemiFunc.RunIsShop()
+                // El panel lo construye ShopInitializePatch vía SemiFunc.RunIsShop().
+                // Antes de construirlo, intentamos refrescar el token para sesiones largas.
+                if (SessionManager.IsActive)
+                {
+                    TokenRefresher.TryRefresh();
+                }
                 return;
             }
 
-            // Escena desconocida: limpiar por seguridad
+            // Escena desconocida: limpiar panel por seguridad
             ShopCanjePanel.DestroyInstance();
         }
 
-        public void SetActiveProfile(LifeSyncClient.PhysicalProfile p)
-        {
-            _activeProfile = p;
-        }
+        public void SetActiveProfile(LifeSyncClient.PhysicalProfile p) => _activeProfile = p;
+        public LifeSyncClient.PhysicalProfile GetActiveProfile() => _activeProfile;
 
-        public LifeSyncClient.PhysicalProfile GetActiveProfile()
+        // ── HARMONY PATCH: MenuPageMain.Start() ──────────────────────
+        /// <summary>
+        /// Punto de inyección del HUD de login.
+        /// Se ejecuta cuando el menú principal ya está completamente
+        /// instanciado y estable, evitando el reset de InputFields que
+        /// ocurría al disparar el login durante la carga volátil de la
+        /// escena Main.
+        /// </summary>
+        [HarmonyPatch(typeof(MenuPageMain), "Start")]
+        public static class MenuPageMainStartPatch
         {
-            return _activeProfile;
+            static void Postfix()
+            {
+                if (SessionManager.IsActive)
+                {
+                    VitaSyncPlugin.Log.LogInfo(
+                        "[Login] MenuPageMain listo. Sesión activa, login omitido.");
+                    return;
+                }
+
+                VitaSyncPlugin.Log.LogInfo(
+                    "[Login] MenuPageMain listo. Desplegando HUD de login.");
+                LoginHUDPanel.Initialize();
+            }
         }
 
         // ── HARMONY PATCH: ShopManager.ShopInitialize() ──────────────
@@ -116,8 +121,6 @@ namespace VitaSync
         {
             static void Postfix()
             {
-                // Usar la función nativa del juego en lugar de GetActiveScene()
-                // SemiFunc.RunIsShop() es exactamente lo que ShopManager.Update() usa internamente
                 if (!SemiFunc.RunIsShop())
                 {
                     VitaSyncPlugin.Log.LogInfo(
@@ -136,12 +139,12 @@ namespace VitaSync
                 if (!SessionManager.IsActive)
                 {
                     VitaSyncPlugin.Log.LogInfo(
-                        "[Shop] Sin sesión LS-G. Canje omitido.");
+                        "[Shop] Sin sesión LSG. Canje omitido.");
                     return;
                 }
 
                 VitaSyncPlugin.Log.LogInfo(
-                    "[Shop] RunIsShop=true. Inicializando panel de canje LS-G.");
+                    "[Shop] RunIsShop=true. Inicializando panel de canje LSG.");
                 ShopCanjePanel.EnsureInstance(profile);
             }
         }
@@ -149,9 +152,8 @@ namespace VitaSync
 
     // ── MONITOR DE ESCENA ─────────────────────────────────────────────
     /// <summary>
-    /// Verifica periódicamente si ShopManager sigue activo.
     /// Destruye el panel de canje si el juego salió de la tienda
-    /// sin disparar OnSceneLoaded (ej: crash parcial, reload rápido).
+    /// sin disparar OnSceneLoaded (ej: cierre abrupto, reload rápido).
     /// </summary>
     public class SceneMonitor : MonoBehaviour
     {
@@ -163,11 +165,8 @@ namespace VitaSync
             if (_timer < 2f) return;
             _timer = 0f;
 
-            // Si el juego ya no está en modo tienda, destruir el panel
             if (!SemiFunc.RunIsShop())
-            {
                 ShopCanjePanel.DestroyInstance();
-            }
         }
     }
 }
