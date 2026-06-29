@@ -5,3 +5,4 @@ Prototipo 3 : Diseñar UI nativa dentro de R.E.P.O. para canjear puntos en Tiend
 Prototipo 4 : Implementar HUD de autenticación y realizar ajustes a Canje en tienda
 Prototipo 5 : Se crea SessionManager y se realiza conexión a módulo cloud de LSG para descontar puntos
 Prototipo 6 : Se crea TokenRefresher y se consolida la estabilidad del Login y casos de cierre e inicio de sesión
+Prototipo 7 : Se rediseñan HUD visuales de Login y Canje en Tienda, además de ajustes a otras funcionalidades 
