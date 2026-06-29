@@ -7,31 +7,61 @@ using UnityEngine.Networking;
 namespace VitaSync
 {
     /// <summary>
-    /// Panel de autenticación LS-G.
-    /// P6: se inyecta mediante Postfix sobre MenuPageMain.Start() en lugar
-    /// de OnSceneLoaded, garantizando que el menú esté completamente
-    /// estable antes de construir los InputFields.
-    /// Añade botón "Ocultar" y manejo de errores con reintento infinito:
-    /// ante credenciales incorrectas el panel permanece en pantalla,
-    /// limpia el campo de contraseña y muestra un mensaje de error.
+    /// Panel de autenticacion LSG — P7 rediseño estético.
+    /// Paleta REPO industrial: grises cálidos, café oscuro, amarillo apagado.
+    /// Layout: etiqueta encima del campo, fuentes más grandes, botón ojo contraseña.
     /// </summary>
     public class LoginHUDPanel : MonoBehaviour
     {
         private static LoginHUDPanel _instance;
 
         private GameObject _canvasGO;
-        private InputField _usernameInput;
-        private InputField _passwordInput;
+        private InputField _userInput;
+        private InputField _passInput;
         private Text _statusText;
-        private Button _loginButton;
+        private Button _loginBtn;
         private bool _loginInProgress = false;
+        private bool _passVisible = false;
 
-        // ── CICLO DE VIDA ─────────────────────────────────────────────
+        private static readonly string[] SPIN = { "/", "-", "\\", "|" };
+        private int _spinIdx = 0; private float _spinTimer = 0f;
+        private const float SPIN_DT = 0.12f;
+
+        // ── Paleta REPO industrial ─────────────────────────────────────
+        // Fondo principal: gris oscuro cálido (no negro puro)
+        private static readonly Color C_BG = new Color(0.13f, 0.11f, 0.09f, 0.93f);
+        // Cabecera: café oscuro
+        private static readonly Color C_HDR = new Color(0.18f, 0.14f, 0.10f, 0.97f);
+        // Amarillo REPO: apagado, industrial, no fluorescente
+        private static readonly Color C_GOLD = new Color(0.78f, 0.60f, 0.18f, 1f);
+        // Texto principal: gris claro cálido
+        private static readonly Color C_TEXT = new Color(0.80f, 0.76f, 0.70f, 1f);
+        // Texto secundario/dim: gris medio cálido
+        private static readonly Color C_DIM = new Color(0.48f, 0.44f, 0.38f, 1f);
+        // Fondo campo: gris oscuro cálido con tinte café
+        private static readonly Color C_INPUT_BG = new Color(0.10f, 0.09f, 0.07f, 1f);
+        // Texto activo en campo
+        private static readonly Color C_INPUT_TXT = new Color(0.86f, 0.82f, 0.74f, 1f);
+        // Placeholder: gris muy apagado
+        private static readonly Color C_INPUT_PH = new Color(0.35f, 0.31f, 0.26f, 1f);
+        // Línea subrayado campo: amarillo REPO semitransparente
+        private static readonly Color C_INPUT_LINE = new Color(0.78f, 0.60f, 0.18f, 0.50f);
+        // Botón login: verde oscuro industrial
+        private static readonly Color C_BTN_OK = new Color(0.12f, 0.20f, 0.08f, 1f);
+        private static readonly Color C_BTN_OK_T = new Color(0.80f, 0.76f, 0.70f, 1f);
+        // Botón omitir: gris café oscuro
+        private static readonly Color C_BTN_SKIP = new Color(0.16f, 0.13f, 0.10f, 1f);
+        private static readonly Color C_BTN_SKIP_T = new Color(0.45f, 0.41f, 0.35f, 1f);
+        // Botón ojo contraseña
+        private static readonly Color C_BTN_EYE = new Color(0.20f, 0.16f, 0.11f, 1f);
+        private static readonly Color C_BTN_EYE_T = new Color(0.78f, 0.60f, 0.18f, 1f);
+        // Error y advertencia
+        private static readonly Color C_ERROR = new Color(0.90f, 0.25f, 0.18f, 1f);
+        private static readonly Color C_WARN = new Color(0.78f, 0.60f, 0.18f, 1f);
+
         public static void Initialize()
         {
             if (_instance != null) return;
-
-            // EventSystem requerido para InputField
             if (FindObjectOfType<EventSystem>() == null)
             {
                 GameObject es = new GameObject("VitaSync_EventSystem");
@@ -39,7 +69,6 @@ namespace VitaSync
                 es.AddComponent<StandaloneInputModule>();
                 DontDestroyOnLoad(es);
             }
-
             GameObject go = new GameObject("VitaSync_LoginHUD");
             DontDestroyOnLoad(go);
             _instance = go.AddComponent<LoginHUDPanel>();
@@ -50,289 +79,285 @@ namespace VitaSync
         {
             if (_instance == null) return;
             if (_instance._canvasGO != null) Destroy(_instance._canvasGO);
-            Destroy(_instance.gameObject);
-            _instance = null;
+            Destroy(_instance.gameObject); _instance = null;
         }
 
-        // ── INPUT ─────────────────────────────────────────────────────
         private void Update()
         {
-            // Solo gestionar cursor cuando el panel está visible
             if (_canvasGO != null && _canvasGO.activeSelf)
-            {
-                Cursor.lockState = CursorLockMode.None;
-                Cursor.visible = true;
-            }
+            { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; }
 
+            if (_loginInProgress && _statusText != null)
+            {
+                _spinTimer += Time.deltaTime;
+                if (_spinTimer >= SPIN_DT)
+                {
+                    _spinTimer = 0f; _spinIdx = (_spinIdx + 1) % SPIN.Length;
+                    string s = _statusText.text;
+                    if (s.Length > 0 &&
+                        System.Array.IndexOf(SPIN, s[s.Length - 1].ToString()) >= 0)
+                        _statusText.text = s.Substring(0, s.Length - 1) + SPIN[_spinIdx];
+                }
+            }
             if (!_loginInProgress)
             {
                 if (Input.GetKeyDown(KeyCode.Tab))
                 {
-                    if (_usernameInput != null && _usernameInput.isFocused)
-                        _passwordInput?.Select();
-                    else if (_passwordInput != null && _passwordInput.isFocused)
-                        _usernameInput?.Select();
+                    if (_userInput != null && _userInput.isFocused) _passInput?.Select();
+                    else _userInput?.Select();
                 }
-
                 if (Input.GetKeyDown(KeyCode.Return) ||
                     Input.GetKeyDown(KeyCode.KeypadEnter))
-                {
-                    HandleLoginSubmit();
-                }
+                    HandleLogin();
             }
         }
 
-        // ── CONSTRUCCIÓN UI ───────────────────────────────────────────
-        private static Font GetFont()
-            => Resources.GetBuiltinResource<Font>("Arial.ttf");
+        private static Font GetFont() =>
+            Resources.GetBuiltinResource<Font>("Arial.ttf");
 
         private void BuildUI()
         {
             _canvasGO = new GameObject("VitaSync_LoginCanvas");
             DontDestroyOnLoad(_canvasGO);
-
-            Canvas canvas = _canvasGO.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvas.sortingOrder = 9999;
+            Canvas cv = _canvasGO.AddComponent<Canvas>();
+            cv.renderMode = RenderMode.ScreenSpaceOverlay;
+            cv.sortingOrder = 9999;
             _canvasGO.AddComponent<CanvasScaler>();
             _canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Panel central
-            GameObject panel = new GameObject("CenterPanel");
+            // Panel más alto para acomodar layout etiqueta-sobre-campo
+            const float PW = 360f;
+            const float PH = 310f;
+
+            GameObject panel = new GameObject("Panel");
             panel.transform.SetParent(_canvasGO.transform, false);
-            panel.AddComponent<Image>().color =
-                new Color(0.09f, 0.1f, 0.13f, 0.99f);
+            panel.AddComponent<Image>().color = C_BG;
+            RectTransform pr = panel.GetComponent<RectTransform>();
+            pr.anchorMin = pr.anchorMax = pr.pivot = new Vector2(0.5f, 0.5f);
+            pr.sizeDelta = new Vector2(PW, PH);
+            pr.anchoredPosition = Vector2.zero;
 
-            RectTransform panelRt = panel.GetComponent<RectTransform>();
-            panelRt.anchorMin = new Vector2(0.5f, 0.5f);
-            panelRt.anchorMax = new Vector2(0.5f, 0.5f);
-            panelRt.sizeDelta = new Vector2(340f, 270f);
+            // Borde izquierdo dorado
+            MakeRect(panel.transform, "Accent",
+                new Vector2(0f, 0f), new Vector2(0f, 1f),
+                new Vector2(3f, 0f), Vector2.zero, C_GOLD);
 
-            CreateLabel(panel.transform,
-                "VITASYNC — AUTENTICACIÓN LSG",
-                new Vector2(0f, 108f), 13, Color.cyan);
+            // ── Cabecera ──────────────────────────────────────────────
+            GameObject hdr = new GameObject("Hdr");
+            hdr.transform.SetParent(panel.transform, false);
+            hdr.AddComponent<Image>().color = C_HDR;
+            RectTransform hr = hdr.GetComponent<RectTransform>();
+            hr.anchorMin = new Vector2(0f, 1f); hr.anchorMax = new Vector2(1f, 1f);
+            hr.pivot = new Vector2(0.5f, 1f);
+            hr.sizeDelta = new Vector2(0f, 42f); hr.anchoredPosition = Vector2.zero;
 
-            _usernameInput = CreateInputField(
-                panel.transform, "Usuario",
-                "Ingrese su correo...", 53f);
+            MakeRect(hdr.transform, "HdrLine",
+                new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(0f, 2f), Vector2.zero, C_GOLD);
 
-            _passwordInput = CreateInputField(
-                panel.transform, "Contraseña",
-                "Ingrese contraseña...", 8f, isPass: true);
+            MakeLbl(hdr.transform, "LIFESYNC GAMES - ACCESO",
+                new Vector2(0.5f, 0.5f), Vector2.zero,
+                new Vector2(PW, 42f), 14, C_GOLD, true, TextAnchor.MiddleCenter);
 
-            _statusText = CreateLabel(panel.transform,
-                "Inicie sesión con su cuenta LifeSync-Games",
-                new Vector2(0f, -42f), 11, Color.gray);
+            // ── Campo USUARIO (etiqueta encima, campo debajo) ─────────
+            // Coordenadas Y relativas al centro del panel (0,0 = centro)
+            // Cabecera ocupa top 42px → contenido desde y=100 hacia abajo
 
-            // Botón INICIAR SESIÓN
-            GameObject btnLogin = CreateButton(
-                panel.transform,
-                "BtnSubmit",
-                "INICIAR SESIÓN",
-                new Vector2(0f, -86f),
-                new Vector2(160f, 34f),
-                new Color(0.15f, 0.45f, 0.25f));
-            btnLogin.GetComponent<Button>().onClick
-                .AddListener(HandleLoginSubmit);
-            _loginButton = btnLogin.GetComponent<Button>();
+            const float LBL_FS = 11;   // tamaño etiqueta
+            const float INP_FS = 12;   // tamaño texto campo
+            const float IW = PW - 40f; // ancho campo
+            const float IH = 30f;   // alto campo
+            const float LH = 18f;   // alto etiqueta
 
-            // Botón OCULTAR  ←  nuevo en P6
-            GameObject btnHide = CreateButton(
-                panel.transform,
-                "BtnHide",
-                "OCULTAR",
-                new Vector2(0f, -122f),
-                new Vector2(85f, 22f),
-                new Color(0.25f, 0.25f, 0.28f));
-            btnHide.GetComponent<Button>().onClick.AddListener(HidePanel);
+            // Etiqueta USUARIO
+            MakeLbl(panel.transform, "USUARIO",
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 96f),
+                new Vector2(IW, LH), (int)LBL_FS, C_GOLD, true, TextAnchor.MiddleLeft);
+
+            // Campo usuario
+            _userInput = MakeInput(panel.transform, "User", "correo@usach.cl",
+                new Vector2(0f, 72f), new Vector2(IW, IH), false, (int)INP_FS);
+
+            // Etiqueta CLAVE
+            MakeLbl(panel.transform, "CLAVE",
+                new Vector2(0.5f, 0.5f), new Vector2(0f, 38f),
+                new Vector2(IW, LH), (int)LBL_FS, C_GOLD, true, TextAnchor.MiddleLeft);
+
+            // Campo contraseña (ancho reducido para dejar espacio al botón ojo)
+            const float EYE_W = 34f;
+            const float EYE_GAP = 6f;
+            float passW = IW - EYE_W - EYE_GAP;
+            float passX = -(EYE_W + EYE_GAP) / 2f; // desplazado a la izquierda
+
+            _passInput = MakeInput(panel.transform, "Pass", "••••••••",
+                new Vector2(passX, 14f), new Vector2(passW, IH), true, (int)INP_FS);
+
+            // Botón ojo — mostrar/ocultar contraseña
+            GameObject eyeBtn = MakeBtn(panel.transform, "BtnEye", "VER",
+                new Vector2(IW / 2f - EYE_W / 2f + 2f, 14f),
+                new Vector2(EYE_W, IH), C_BTN_EYE, C_BTN_EYE_T, 9);
+            eyeBtn.GetComponent<Button>().onClick.AddListener(TogglePassVisibility);
+
+            // Separador
+            MakeRect(panel.transform, "Sep",
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
+                new Vector2(PW - 20f, 1f), new Vector2(0f, -12f),
+                new Color(C_GOLD.r, C_GOLD.g, C_GOLD.b, 0.25f));
+
+            // Status
+            _statusText = MakeLbl(panel.transform, "LISTO PARA AUTENTICAR",
+                new Vector2(0.5f, 0.5f), new Vector2(0f, -30f),
+                new Vector2(PW - 20f, 18f), 10, C_DIM, false, TextAnchor.MiddleCenter);
+
+            // ── Botones ───────────────────────────────────────────────
+            GameObject bLogin = MakeBtn(panel.transform, "BtnLogin",
+                "INICIAR SESION",
+                new Vector2(-54f, -80f), new Vector2(196f, 34f),
+                C_BTN_OK, C_BTN_OK_T, 12);
+            _loginBtn = bLogin.GetComponent<Button>();
+            _loginBtn.onClick.AddListener(HandleLogin);
+
+            MakeBtn(panel.transform, "BtnSkip",
+                "OMITIR",
+                new Vector2(116f, -80f), new Vector2(84f, 34f),
+                C_BTN_SKIP, C_BTN_SKIP_T, 11)
+                .GetComponent<Button>().onClick.AddListener(HidePanel);
+
+            // Pie
+            MakeLbl(panel.transform, "lsg.diinf.usach.cl  ·  DIINF USACH",
+                new Vector2(0.5f, 0.5f), new Vector2(0f, -128f),
+                new Vector2(PW - 20f, 14f), 8, C_DIM, false, TextAnchor.MiddleCenter);
         }
 
-        // ── LÓGICA ────────────────────────────────────────────────────
+        // ── Lógica ────────────────────────────────────────────────────
+        private void TogglePassVisibility()
+        {
+            _passVisible = !_passVisible;
+            if (_passInput != null)
+                _passInput.inputType = _passVisible
+                    ? InputField.InputType.Standard
+                    : InputField.InputType.Password;
+            // Forzar refresco visual del InputField
+            _passInput?.ForceLabelUpdate();
+        }
+
         private void HidePanel()
         {
-            VitaSyncPlugin.Log.LogInfo(
-                "[Login] Panel descartado por el jugador. " +
-                "Modo pasivo activo. Se redesplegará al volver al menú.");
-
-            // Devolver el cursor al control del juego antes de destruir
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-
-            // Destruir completamente en lugar de ocultar:
-            // así _instance queda null y MenuPageMainStartPatch
-            // puede volver a crear el panel al regresar al lobby.
+            VitaSyncPlugin.Log.LogInfo("[Login] Omitido. Modo pasivo.");
+            Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             if (_canvasGO != null) Destroy(_canvasGO);
-            Destroy(gameObject);
-            _instance = null;
+            Destroy(gameObject); _instance = null;
         }
 
-        private void HandleLoginSubmit()
+        private void HandleLogin()
         {
             if (_loginInProgress) return;
-
-            if (string.IsNullOrEmpty(_usernameInput.text) ||
-                string.IsNullOrEmpty(_passwordInput.text))
-            {
-                SetStatus("Complete ambos campos.", Color.red);
-                return;
-            }
-
-            SetStatus("Conectando con lsg.diinf.usach.cl...", Color.yellow);
-            _loginInProgress = true;
-            _loginButton.interactable = false;
-
-            StartCoroutine(LoginFlow(
-                _usernameInput.text.Trim(),
-                _passwordInput.text));
+            if (string.IsNullOrEmpty(_userInput.text) ||
+                string.IsNullOrEmpty(_passInput.text))
+            { SetStatus("COMPLETE AMBOS CAMPOS", C_ERROR); return; }
+            SetStatus("CONECTANDO " + SPIN[0], C_WARN);
+            _spinIdx = 0; _spinTimer = 0f;
+            _loginInProgress = true; _loginBtn.interactable = false;
+            StartCoroutine(LoginFlow(_userInput.text.Trim(), _passInput.text));
         }
 
         private IEnumerator LoginFlow(string user, string pass)
         {
-            // ── 1. LOGIN ──────────────────────────────────────────────
             string token = null;
-
             WWWForm form = new WWWForm();
-            form.AddField("username", user);
-            form.AddField("password", pass);
-            form.AddField("grant_type", "");
-            form.AddField("scope", "");
-            form.AddField("client_id", "");
-            form.AddField("client_secret", "");
+            form.AddField("username", user); form.AddField("password", pass);
+            form.AddField("grant_type", ""); form.AddField("scope", "");
+            form.AddField("client_id", ""); form.AddField("client_secret", "");
 
-            using (UnityWebRequest req =
-                UnityWebRequest.Post(VitaSyncPlugin.AUTH_URL, form))
+            using (UnityWebRequest req = UnityWebRequest.Post(
+                VitaSyncPlugin.AUTH_URL, form))
             {
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
+                req.SetRequestHeader("Accept", "application/json"); req.timeout = 10;
                 yield return req.SendWebRequest();
-
-                if (req.result != UnityWebRequest.Result.Success ||
-                    req.responseCode == 401 || req.responseCode == 400)
-                {
-                    // ── ERROR RECUPERABLE: panel permanece abierto ────
-                    OnLoginError("Credenciales incorrectas. Intente nuevamente.");
-                    yield break;
-                }
-
-                token = ExtractJson(req.downloadHandler.text, "access_token");
+                if (req.result == UnityWebRequest.Result.ConnectionError)
+                { OnNetErr("SIN CONEXION CON SERVIDOR"); yield break; }
+                if (req.responseCode == 401 || req.responseCode == 400 ||
+                    req.result != UnityWebRequest.Result.Success)
+                { OnLoginErr("CREDENCIALES INCORRECTAS"); yield break; }
+                token = LifeSyncClient.ExtractString(
+                    req.downloadHandler.text, "access_token");
             }
-
             if (string.IsNullOrEmpty(token))
-            {
-                OnLoginError("Error en respuesta del servidor.");
-                yield break;
-            }
+            { OnLoginErr("ERROR EN RESPUESTA"); yield break; }
 
-            // ── 2. WHOAMI ─────────────────────────────────────────────
             int playerId = -1;
-
-            using (UnityWebRequest req =
-                UnityWebRequest.Get(VitaSyncPlugin.AUTH_WHOAMI))
+            using (UnityWebRequest req = UnityWebRequest.Get(
+                VitaSyncPlugin.AUTH_WHOAMI))
             {
                 req.SetRequestHeader("Authorization", "Bearer " + token);
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
+                req.SetRequestHeader("Accept", "application/json"); req.timeout = 10;
                 yield return req.SendWebRequest();
-
                 if (req.result == UnityWebRequest.Result.Success)
                 {
-                    string idStr = ExtractJson(
+                    string ids = LifeSyncClient.ExtractString(
                         req.downloadHandler.text, "id_players");
-                    int.TryParse(idStr, out playerId);
+                    int.TryParse(ids, out playerId);
                 }
             }
-
             if (playerId < 0)
-            {
-                OnLoginError("No se pudo recuperar el ID del jugador.");
-                yield break;
-            }
+            { OnLoginErr("ID DE JUGADOR NO ENCONTRADO"); yield break; }
 
-            // ── 3. BALANCE ────────────────────────────────────────────
-            string balUrl = VitaSyncPlugin.CORE_URL +
-                            "/players/" + playerId + "/points/balance";
-
-            using (UnityWebRequest req = UnityWebRequest.Get(balUrl))
+            using (UnityWebRequest req = UnityWebRequest.Get(
+                VitaSyncPlugin.CORE_URL +
+                "/players/" + playerId + "/points/balance"))
             {
                 req.SetRequestHeader("Authorization", "Bearer " + token);
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
+                req.SetRequestHeader("Accept", "application/json"); req.timeout = 10;
                 yield return req.SendWebRequest();
-
                 if (req.result != UnityWebRequest.Result.Success)
-                {
-                    OnLoginError("Error al obtener balance físico.");
-                    yield break;
-                }
+                { OnLoginErr("ERROR AL OBTENER BALANCE"); yield break; }
 
                 int puntos = ParseBalance(req.downloadHandler.text, "2");
-
-                // Guardar sesión en SessionManager (persiste al destruir panel)
                 SessionManager.Save(token, playerId);
-
-                // Construir perfil y registrarlo en el plugin
-                LifeSyncClient.PhysicalProfile profile =
-                    new LifeSyncClient.PhysicalProfile();
-                profile.Puntos = puntos;
-                profile.CanjesUsados = 0;
-                profile.CanjesMax = 2;
-                VitaSyncPlugin.Instance.SetActiveProfile(profile);
-
+                var p = new LifeSyncClient.PhysicalProfile();
+                p.Puntos = puntos; p.CanjesUsados = 0; p.CanjesMax = 2;
+                VitaSyncPlugin.Instance.SetActiveProfile(p);
                 VitaSyncPlugin.Log.LogInfo(
-                    "[LSG] Login exitoso. Balance físico: " + puntos);
+                    "[LSG] Login exitoso. Balance: " + puntos);
             }
-
-            // ── LIMPIAR Y CERRAR ──────────────────────────────────────
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-
+            Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             if (_canvasGO != null) Destroy(_canvasGO);
-            Destroy(gameObject);
-            _instance = null;
+            Destroy(gameObject); _instance = null;
         }
 
-        /// <summary>
-        /// Reacción ante error recuperable: el panel permanece visible,
-        /// el campo de contraseña se limpia y se reactivan los controles.
-        /// El jugador puede reintentar sin reiniciar el juego.
-        /// </summary>
-        private void OnLoginError(string mensaje)
+        private void OnLoginErr(string msg)
         {
-            SetStatus(mensaje, Color.red);
-            _passwordInput.text = "";
-            _loginInProgress = false;
-            _loginButton.interactable = true;
-            _passwordInput.Select();
-            VitaSyncPlugin.Log.LogWarning("[Login] Error recuperable: " + mensaje);
+            SetStatus(msg, C_ERROR); _passInput.text = "";
+            _loginInProgress = false; _loginBtn.interactable = true;
+            _passInput.Select();
+            VitaSyncPlugin.Log.LogWarning("[Login] " + msg);
         }
-
-        // ── HELPERS ───────────────────────────────────────────────────
+        private void OnNetErr(string msg)
+        {
+            SetStatus(msg, C_WARN);
+            _loginInProgress = false; _loginBtn.interactable = true;
+            VitaSyncPlugin.Log.LogError("[Login] " + msg);
+        }
         private void SetStatus(string msg, Color col)
         {
             if (_statusText == null) return;
-            _statusText.text = msg;
-            _statusText.color = col;
+            _statusText.text = msg; _statusText.color = col;
         }
-
-        private static string ExtractJson(string json, string key)
-            => LifeSyncClient.ExtractString(json, key);
 
         private static int ParseBalance(string json, string dimId)
         {
             int idx = 0;
             while (true)
             {
-                int di = json.IndexOf(
-                    "\"id_point_dimension\"", idx,
+                int di = json.IndexOf("\"id_point_dimension\"", idx,
                     System.StringComparison.Ordinal);
                 if (di < 0) break;
-                int oe = json.IndexOf('}', di);
-                if (oe < 0) break;
-                string slice = json.Substring(di, oe - di + 1);
-                string dimVal = ExtractJson(slice, "id_point_dimension");
-                if (dimVal == dimId)
+                int oe = json.IndexOf('}', di); if (oe < 0) break;
+                string sl = json.Substring(di, oe - di + 1);
+                string dv = LifeSyncClient.ExtractString(sl, "id_point_dimension");
+                if (dv == dimId)
                 {
-                    string b = ExtractJson(slice, "balance");
+                    string b = LifeSyncClient.ExtractString(sl, "balance");
                     if (int.TryParse(b, out int bal)) return bal;
                 }
                 idx = oe + 1;
@@ -340,81 +365,100 @@ namespace VitaSync
             return 0;
         }
 
-        private Text CreateLabel(Transform parent, string text,
-            Vector2 pos, int size, Color col)
+        // ── Helpers ───────────────────────────────────────────────────
+        private static void MakeRect(Transform p, string name,
+            Vector2 aMin, Vector2 aMax, Vector2 size, Vector2 pos, Color col)
         {
-            GameObject go = new GameObject("Label");
-            go.transform.SetParent(parent, false);
-            Text t = go.AddComponent<Text>();
-            t.font = GetFont();
-            t.text = text;
-            t.fontSize = size;
-            t.color = col;
-            t.alignment = TextAnchor.MiddleCenter;
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(p, false);
+            go.AddComponent<Image>().color = col;
             RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchoredPosition = pos;
-            rt.sizeDelta = new Vector2(320f, 25f);
+            rt.anchorMin = aMin; rt.anchorMax = aMax;
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = size; rt.anchoredPosition = pos;
+        }
+
+        private static Text MakeLbl(Transform p, string text, Vector2 anchor,
+            Vector2 pos, Vector2 size, int fs, Color col, bool bold, TextAnchor align)
+        {
+            GameObject go = new GameObject("T");
+            go.transform.SetParent(p, false);
+            Text t = go.AddComponent<Text>();
+            t.font = GetFont(); t.text = text; t.fontSize = fs; t.color = col;
+            t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+            t.alignment = align;
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = anchor; rt.anchorMax = anchor;
+            rt.pivot = anchor; rt.sizeDelta = size; rt.anchoredPosition = pos;
             return t;
         }
 
-        private GameObject CreateButton(Transform parent, string name,
-            string label, Vector2 pos, Vector2 size, Color color)
+        private static InputField MakeInput(Transform p, string name,
+            string ph, Vector2 pos, Vector2 size, bool isPass, int fs)
         {
-            GameObject go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-            go.AddComponent<Image>().color = color;
-            go.AddComponent<Button>();
+            GameObject go = new GameObject("Inp_" + name);
+            go.transform.SetParent(p, false);
+            go.AddComponent<Image>().color = C_INPUT_BG;
             RectTransform rt = go.GetComponent<RectTransform>();
-            rt.sizeDelta = size;
-            rt.anchoredPosition = pos;
-            CreateLabel(go.transform, label, Vector2.zero, 11, Color.white);
-            return go;
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = size; rt.anchoredPosition = pos;
+
+            MakeRect(go.transform, "Line",
+                new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(0f, 1f), Vector2.zero, C_INPUT_LINE);
+
+            InputField inp = go.AddComponent<InputField>();
+
+            GameObject phGo = new GameObject("PH");
+            phGo.transform.SetParent(go.transform, false);
+            Text phT = phGo.AddComponent<Text>();
+            phT.font = GetFont(); phT.text = ph; phT.color = C_INPUT_PH;
+            phT.fontSize = fs - 1; phT.alignment = TextAnchor.MiddleLeft;
+            RectTransform phR = phGo.GetComponent<RectTransform>();
+            phR.anchorMin = Vector2.zero; phR.anchorMax = Vector2.one;
+            phR.sizeDelta = new Vector2(-12f, -4f);
+
+            GameObject txGo = new GameObject("TX");
+            txGo.transform.SetParent(go.transform, false);
+            Text txT = txGo.AddComponent<Text>();
+            txT.font = GetFont(); txT.color = C_INPUT_TXT;
+            txT.fontSize = fs; txT.alignment = TextAnchor.MiddleLeft;
+            RectTransform txR = txGo.GetComponent<RectTransform>();
+            txR.anchorMin = Vector2.zero; txR.anchorMax = Vector2.one;
+            txR.sizeDelta = new Vector2(-12f, -4f);
+
+            inp.placeholder = phT; inp.textComponent = txT;
+            if (isPass) inp.inputType = InputField.InputType.Password;
+            return inp;
         }
 
-        private InputField CreateInputField(Transform parent, string name,
-            string placeholder, float yPos, bool isPass = false)
+        private static GameObject MakeBtn(Transform p, string name,
+            string label, Vector2 pos, Vector2 size,
+            Color bg, Color fg, int fs = 11)
         {
-            GameObject go = new GameObject("InputField_" + name);
-            go.transform.SetParent(parent, false);
-            go.AddComponent<Image>().color = new Color(0.18f, 0.19f, 0.24f);
-
-            InputField input = go.AddComponent<InputField>();
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(p, false);
+            Image img = go.AddComponent<Image>(); img.color = bg;
+            Button btn = go.AddComponent<Button>();
+            ColorBlock cb = ColorBlock.defaultColorBlock;
+            cb.normalColor = Color.white;
+            cb.highlightedColor = new Color(1.22f, 1.22f, 1.22f, 1f);
+            cb.pressedColor = new Color(0.78f, 0.78f, 0.78f, 1f);
+            cb.disabledColor = new Color(0.5f, 0.5f, 0.5f, 1f);
+            cb.colorMultiplier = 1f;
+            btn.colors = cb; btn.targetGraphic = img;
             RectTransform rt = go.GetComponent<RectTransform>();
-            rt.sizeDelta = new Vector2(260f, 34f);
-            rt.anchoredPosition = new Vector2(0f, yPos);
-
-            // Placeholder
-            GameObject phGo = new GameObject("Placeholder");
-            phGo.transform.SetParent(go.transform, false);
-            Text phText = phGo.AddComponent<Text>();
-            phText.font = GetFont();
-            phText.text = placeholder;
-            phText.color = new Color(0.5f, 0.5f, 0.5f, 0.6f);
-            phText.fontSize = 11;
-            phText.alignment = TextAnchor.MiddleLeft;
-            RectTransform phRt = phGo.GetComponent<RectTransform>();
-            phRt.anchorMin = Vector2.zero;
-            phRt.anchorMax = Vector2.one;
-            phRt.sizeDelta = new Vector2(-16f, -4f);
-
-            // Texto real
-            GameObject txGo = new GameObject("Text");
-            txGo.transform.SetParent(go.transform, false);
-            Text tx = txGo.AddComponent<Text>();
-            tx.font = GetFont();
-            tx.color = Color.white;
-            tx.fontSize = 12;
-            tx.alignment = TextAnchor.MiddleLeft;
-            RectTransform txRt = txGo.GetComponent<RectTransform>();
-            txRt.anchorMin = Vector2.zero;
-            txRt.anchorMax = Vector2.one;
-            txRt.sizeDelta = new Vector2(-16f, -4f);
-
-            input.placeholder = phText;
-            input.textComponent = tx;
-            if (isPass) input.inputType = InputField.InputType.Password;
-
-            return input;
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = size; rt.anchoredPosition = pos;
+            GameObject lGo = new GameObject("L");
+            lGo.transform.SetParent(go.transform, false);
+            Text t = lGo.AddComponent<Text>(); t.font = GetFont();
+            t.text = label; t.fontSize = fs; t.color = fg;
+            t.fontStyle = FontStyle.Bold; t.alignment = TextAnchor.MiddleCenter;
+            RectTransform lr = lGo.GetComponent<RectTransform>();
+            lr.anchorMin = Vector2.zero; lr.anchorMax = Vector2.one;
+            lr.sizeDelta = Vector2.zero;
+            return go;
         }
     }
 }

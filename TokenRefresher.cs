@@ -6,52 +6,40 @@ using UnityEngine.Networking;
 namespace VitaSync
 {
     /// <summary>
-    /// Componente auxiliar que consume POST /token/refresh para renovar
-    /// el JWT sin necesidad de re-autenticar con usuario y contraseña.
-    /// Se invoca automáticamente al entrar a cada escena de tienda,
-    /// mitigando la expiración de 120 minutos en sesiones largas.
+    /// Renueva el JWT via POST /token/refresh al entrar a cada tienda.
+    /// P7: eliminado GameObject.Find() — usa VitaSyncPlugin.Monitor directamente.
+    /// GameObject.Find() no busca en objetos DontDestroyOnLoad en Unity 2022,
+    /// por lo que siempre retornaba null y el refresco nunca se ejecutaba.
     /// </summary>
     public static class TokenRefresher
     {
         private static bool _refreshInProgress = false;
 
         /// <summary>
-        /// Solicita el refresco del token. Solo ejecuta si no hay un
-        /// refresco ya en curso y la sesión está activa.
-        /// La coroutine se lanza en el SceneMonitor (MonoBehaviour
-        /// persistente) para no depender de ningún panel de UI.
+        /// Llamado desde SceneMonitor.StartTokenRefresh() con referencia directa.
         /// </summary>
-        public static void TryRefresh()
+        public static void TryRefreshDirect(MonoBehaviour runner)
         {
             if (_refreshInProgress)
             {
                 VitaSyncPlugin.Log.LogInfo(
-                    "[Refresh] Refresco ya en progreso. Ignorado.");
+                    "[Refresh] Ya en progreso. Ignorado.");
                 return;
             }
-
             if (!SessionManager.IsActive)
             {
                 VitaSyncPlugin.Log.LogInfo(
-                    "[Refresh] Sin sesión activa. Refresco omitido.");
+                    "[Refresh] Sin sesion activa. Omitido.");
                 return;
             }
-
-            // Usamos el SceneMonitor como runner de la coroutine porque
-            // es un MonoBehaviour con DontDestroyOnLoad garantizado.
-            GameObject go = GameObject.Find("VitaSync_Monitor");
-            if (go == null)
+            if (runner == null)
             {
                 VitaSyncPlugin.Log.LogWarning(
-                    "[Refresh] VitaSync_Monitor no encontrado. " +
-                    "Refresco omitido.");
+                    "[Refresh] Runner nulo. Omitido.");
                 return;
             }
 
-            SceneMonitor monitor = go.GetComponent<SceneMonitor>();
-            if (monitor == null) return;
-
-            monitor.StartCoroutine(RefreshCoroutine());
+            runner.StartCoroutine(RefreshCoroutine());
         }
 
         private static IEnumerator RefreshCoroutine()
@@ -59,9 +47,8 @@ namespace VitaSync
             _refreshInProgress = true;
             VitaSyncPlugin.Log.LogInfo("[Refresh] Iniciando refresco de token...");
 
-            // El endpoint POST /token/refresh recibe el token actual
-            // en el header Authorization y devuelve un nuevo access_token.
-            string jsonBody = "{\"token\":\"" + SessionManager.BearerToken + "\"}";
+            string jsonBody =
+                "{\"token\":\"" + SessionManager.BearerToken + "\"}";
 
             using (UnityWebRequest req =
                 new UnityWebRequest(VitaSyncPlugin.AUTH_REFRESH, "POST"))
@@ -86,23 +73,20 @@ namespace VitaSync
                     {
                         SessionManager.UpdateToken(newToken);
                         VitaSyncPlugin.Log.LogInfo(
-                            "[Refresh] Token actualizado en SessionManager.");
+                            "[Refresh] Token actualizado correctamente.");
                     }
                     else
                     {
                         VitaSyncPlugin.Log.LogWarning(
-                            "[Refresh] Respuesta 200 pero sin access_token. " +
+                            "[Refresh] Respuesta 200 sin access_token. " +
                             "Token anterior conservado.");
                     }
                 }
                 else
                 {
-                    // El token antiguo sigue siendo válido hasta que expire:
-                    // solo logueamos el error, no cortamos la sesión.
                     VitaSyncPlugin.Log.LogWarning(
                         "[Refresh] Error HTTP " + req.responseCode +
-                        ": " + req.error +
-                        ". Token anterior conservado.");
+                        ": " + req.error + ". Token anterior conservado.");
                 }
             }
 
