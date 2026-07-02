@@ -6,14 +6,11 @@ using System.Collections;
 
 namespace VitaSync
 {
-    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.7.0")]
+    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.8.0")]
     public class VitaSyncPlugin : BaseUnityPlugin
     {
         public static VitaSyncPlugin Instance { get; private set; }
         public static BepInEx.Logging.ManualLogSource Log => Instance.Logger;
-
-        // Referencia directa al SceneMonitor.
-        // GameObject.Find() NO busca en DontDestroyOnLoad en Unity 2022.
         public static SceneMonitor Monitor { get; private set; }
 
         private LifeSyncClient.PhysicalProfile _activeProfile;
@@ -26,75 +23,38 @@ namespace VitaSync
         private void Awake()
         {
             Instance = this;
-
-            // Patchear con PatchAll() pero capturando excepciones de patches
-            // opcionales (ej: RoundDirector.SetupLevel que puede no existir).
             var harmony = new Harmony("com.diinf.vitasync");
-            foreach (var type in System.Reflection.Assembly.GetExecutingAssembly().GetTypes())
-            {
-                try { harmony.CreateClassProcessor(type).Patch(); }
-                catch (System.Exception ex)
-                {
-                    Log.LogWarning("[Harmony] Patch omitido para " +
-                        type.Name + ": " + ex.Message);
-                }
-            }
-
+            harmony.PatchAll();
             SceneManager.sceneLoaded += OnSceneLoaded;
-
             GameObject go = new GameObject("VitaSync_Monitor");
             Monitor = go.AddComponent<SceneMonitor>();
             DontDestroyOnLoad(go);
-
-            Log.LogInfo("VitaSync v0.7.0 cargado.");
+            Log.LogInfo("VitaSync v0.8.0 cargado.");
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             Log.LogInfo("[VitaSync] Escena: " + scene.name + " (" + mode + ")");
-
-            if (scene.name == "Main" && mode == LoadSceneMode.Additive)
-            {
-                Log.LogInfo("[VitaSync] Main aditiva ignorada.");
-                return;
-            }
-
-            // FIX: destruir el panel de canje INMEDIATAMENTE en cualquier
-            // cambio de escena que no sea tienda. Esto cubre el caso donde
-            // el panel persistia al pasar al nivel intermedio (Lobby) y
-            // luego al nivel nuevo.
-            // RunIsShop() puede tardar en actualizarse — usar el nombre de
-            // escena como señal inmediata es mas fiable.
-            bool esEscenaTienda = scene.name.Contains("Shop");
-            if (!esEscenaTienda)
-            {
-                ShopCanjePanel.DestroyInstance();
-                Log.LogInfo("[VitaSync] Panel de canje destruido (escena no-tienda).");
-            }
-
-            // Al salir completamente de la partida, resetear el estado del monitor.
-            if (scene.name == "LobbyJoin" || scene.name == "Reload")
-            {
-                Monitor?.OnExitRun();
-            }
+            if (scene.name == "Main" && mode == LoadSceneMode.Additive) return;
+            if (!scene.name.Contains("Shop")) ShopCanjePanel.DestroyInstance();
+            if (scene.name == "LobbyJoin" || scene.name == "Reload") Monitor?.OnExitRun();
         }
 
         public void SetActiveProfile(LifeSyncClient.PhysicalProfile p) => _activeProfile = p;
         public LifeSyncClient.PhysicalProfile GetActiveProfile() => _activeProfile;
 
-        // ── LOGIN: Menu principal ─────────────────────────────────────
+        // ── LOGIN: Menú principal ─────────────────────────────────────
         [HarmonyPatch(typeof(MenuPageMain), "Start")]
         public static class MenuPageMainStartPatch
         {
             static void Postfix()
             {
-                if (SessionManager.IsActive)
-                {
-                    VitaSyncPlugin.Log.LogInfo(
-                        "[Login] MenuPageMain: sesion activa, login omitido.");
-                    return;
-                }
-                VitaSyncPlugin.Log.LogInfo("[Login] MenuPageMain: desplegando HUD.");
+                // Resetear upgrades siempre al llegar al menú principal.
+                // Esto cubre tanto "salir de partida" como "nueva partida".
+                Monitor?.ResetUpgrades();
+
+                if (SessionManager.IsActive) { Log.LogInfo("[Login] Sesión activa, omitido."); return; }
+                Log.LogInfo("[Login] MenuPageMain: desplegando HUD.");
                 LoginHUDPanel.Initialize();
             }
         }
@@ -105,222 +65,173 @@ namespace VitaSync
         {
             static void Postfix()
             {
-                if (SessionManager.IsActive)
-                {
-                    VitaSyncPlugin.Log.LogInfo(
-                        "[Login] MenuPageLobby: sesion activa, login omitido.");
-                    return;
-                }
-                VitaSyncPlugin.Log.LogInfo("[Login] MenuPageLobby: desplegando HUD.");
+                if (SessionManager.IsActive) return;
+                Log.LogInfo("[Login] MenuPageLobby: desplegando HUD.");
                 LoginHUDPanel.Initialize();
             }
         }
 
-        // ── TIENDA: ShopManager.ShopInitialize() ─────────────────────
+        // ── TIENDA ────────────────────────────────────────────────────
         [HarmonyPatch(typeof(ShopManager), "ShopInitialize")]
         public static class ShopInitializePatch
         {
             static void Postfix()
             {
-                if (!SemiFunc.RunIsShop())
-                {
-                    VitaSyncPlugin.Log.LogInfo(
-                        "[Shop] ShopInitialize: fuera de tienda, ignorado.");
-                    return;
-                }
-
+                if (!SemiFunc.RunIsShop()) { Log.LogInfo("[Shop] ShopInitialize: fuera de tienda, ignorado."); return; }
                 var profile = Instance.GetActiveProfile();
-                if (profile == null)
-                {
-                    VitaSyncPlugin.Log.LogInfo("[Shop] Sin perfil activo. Omitido.");
-                    return;
-                }
-                if (!SessionManager.IsActive)
-                {
-                    VitaSyncPlugin.Log.LogInfo("[Shop] Sin sesion LSG. Omitido.");
-                    return;
-                }
-
+                if (profile == null || !SessionManager.IsActive) return;
                 profile.CanjesUsados = 0;
-                VitaSyncPlugin.Log.LogInfo(
-                    "[Shop] Canjes reseteados -> 0/" + profile.CanjesMax + ".");
-
-                Monitor?.StartTokenRefresh();
-
-                VitaSyncPlugin.Log.LogInfo("[Shop] Inicializando panel LSG.");
+                Log.LogInfo("[Shop] Canjes reseteados -> 0/" + profile.CanjesMax + ".");
+                TokenRefresher.TryRefresh();
                 ShopCanjePanel.EnsureInstance(profile);
             }
         }
 
-        // ── UPGRADES EN NIVEL: RoundDirector ─────────────────────────
-        // Este patch es OPCIONAL: RoundDirector puede tener el metodo con
-        // otro nombre segun la version del juego. Si falla, el Awake()
-        // captura la excepcion con un warning sin abortar el plugin.
-        // La arquitectura de SceneMonitor con polling de SemiFunc.RunIsLevel()
-        // cubre el caso donde este patch no se registre.
-        [HarmonyPatch(typeof(RoundDirector), "SetupLevel")]
-        public static class RoundDirectorSetupLevelPatch
+        // ── UPGRADES: ChangeLevel Prefix ──────────────────────────────
+        // ChangeLevel() se llama con levelCurrent==levelLobby cuando el
+        // jugador sale del Lobby hacia el nivel real. En ese momento:
+        //   - RunIsShop() = false → SetPlayerHealth() no está bloqueado
+        //   - PlayerController del Lobby todavía existe (podría ser null)
+        //   - StatsManager persiste entre escenas (DontDestroyOnLoad)
+        //
+        // Escribimos directamente en StatsManager aquí para que cuando
+        // el nivel real cargue y LateStart()/Fetch() corran, lean los
+        // valores de upgrades ya persistidos.
+        //
+        // Usamos Prefix para actuar ANTES de que SetRunLevel() cambie
+        // levelCurrent y antes de que RestartScene() destruya la escena.
+        [HarmonyPatch(typeof(RunManager), "ChangeLevel")]
+        public static class ChangeLevelPatch
         {
-            static void Postfix()
+            static void Prefix(bool _completedLevel, bool _levelFailed)
             {
                 if (!SessionManager.IsActive) return;
                 if (!SessionManager.TieneUpgradesPendientes) return;
 
-                VitaSyncPlugin.Log.LogInfo(
-                    "[LSG] RoundDirector.SetupLevel() disparado. Encolando upgrades. " +
-                    "STM=" + SessionManager.UpgradesStamina +
+                // Solo actuar cuando salimos del Lobby hacia el nivel real.
+                // El flujo confirmado: levelCurrent==levelLobby &&
+                // !_levelFailed → SetRunLevel() → nivel real.
+                if (RunManager.instance == null) return;
+                if (!SemiFunc.RunIsLobby()) return;
+                if (_levelFailed) return; // fallo de nivel, no aplica
+
+                Log.LogInfo(
+                    "[LSG] ChangeLevel desde Lobby detectado. " +
+                    "Aplicando upgrades en StatsManager. " +
+                    "HP=" + SessionManager.UpgradesHealth +
                     " GRP=" + SessionManager.UpgradesGrip +
-                    " HP=" + SessionManager.UpgradesHealth +
+                    " STM=" + SessionManager.UpgradesStamina +
                     " SPD=" + SessionManager.UpgradesSpeed);
 
-                Monitor?.EnqueueUpgrades();
+                Monitor?.AplicarUpgradesSync();
             }
         }
     }
 
-    /// <summary>
-    /// MonoBehaviour persistente (DontDestroyOnLoad).
-    /// Responsabilidades:
-    ///   1. Destruir ShopCanjePanel cuando RunIsShop() deja de ser true.
-    ///   2. Aplicar upgrades LSG post-LateStart via coroutine con timeout.
-    ///      El polling de SemiFunc.RunIsLevel() actua como fallback cuando
-    ///      RoundDirectorSetupLevelPatch no se registra.
-    ///   3. Ejecutar el refresco de token JWT sin GameObject.Find().
-    /// </summary>
+    // ── SCENE MONITOR ─────────────────────────────────────────────────
     public class SceneMonitor : MonoBehaviour
     {
-        private float _shopTimer = 0f;
-        private bool _upgradesPendientes = false;
+        private float _timer = 0f;
 
-        // Fallback: detectar inicio de nivel via polling de RunIsLevel().
-        // Se activa solo si RoundDirectorSetupLevelPatch no pudo registrarse.
-        private bool _eraLevel = false;
+        // Upgrades ya aplicados en Lobbies anteriores de esta run.
+        // Solo el delta (UpgradesX - _aplicadosX) se envía a PunManager.
+        private int _aplicadosStamina = 0;
+        private int _aplicadosGrip = 0;
+        private int _aplicadosHealth = 0;
+        private int _aplicadosSpeed = 0;
 
-        // ── API publica ───────────────────────────────────────────────
-
-        public void EnqueueUpgrades()
+        private void Update()
         {
-            if (_upgradesPendientes)
+            _timer += Time.deltaTime;
+            if (_timer >= 2f)
             {
-                VitaSyncPlugin.Log.LogInfo(
-                    "[LSG] Upgrades ya encolados. Ignorando duplicado.");
-                return;
+                _timer = 0f;
+                if (!SemiFunc.RunIsShop()) ShopCanjePanel.DestroyInstance();
             }
-            _upgradesPendientes = true;
-            StartCoroutine(AplicarUpgradesCoroutine());
-        }
-
-        public void StartTokenRefresh()
-        {
-            TokenRefresher.TryRefreshDirect(this);
         }
 
         public void OnExitRun()
         {
-            _upgradesPendientes = false;
-            _eraLevel = false;
             VitaSyncPlugin.Log.LogInfo("[SceneMonitor] Estado reseteado al salir de run.");
         }
 
-        // ── Update ────────────────────────────────────────────────────
-
-        private void Update()
+        public void ResetUpgrades()
         {
-            // ── 1. Destruir panel si no estamos en tienda ─────────────
-            // Este check con timer es el fallback; la destruccion inmediata
-            // ocurre en OnSceneLoaded. Aqui cubrimos transiciones internas
-            // que no disparan OnSceneLoaded (ej: GameDirector cambia estado).
-            _shopTimer += Time.deltaTime;
-            if (_shopTimer >= 1f) // 1s, antes eran 2s
-            {
-                _shopTimer = 0f;
-                if (!SemiFunc.RunIsShop())
-                    ShopCanjePanel.DestroyInstance();
-            }
-
-            // ── 2. Fallback: detectar inicio de nivel via polling ──────
-            // Solo actua si hay upgrades pendientes y sesion activa.
-            if (!SessionManager.IsActive) return;
-            if (!SessionManager.TieneUpgradesPendientes) return;
-            if (_upgradesPendientes) return; // ya hay coroutine en vuelo
-
-            bool esLevelAhora = SemiFunc.RunIsLevel();
-
-            // Flanco ascendente: pasamos de no-nivel a nivel activo.
-            if (esLevelAhora && !_eraLevel)
-            {
-                VitaSyncPlugin.Log.LogInfo(
-                    "[LSG] Fallback: RunIsLevel() true detectado. Encolando upgrades.");
-                EnqueueUpgrades();
-            }
-
-            _eraLevel = esLevelAhora;
+            SessionManager.ClearUpgrades();
+            _aplicadosStamina = 0;
+            _aplicadosGrip = 0;
+            _aplicadosHealth = 0;
+            _aplicadosSpeed = 0;
+            VitaSyncPlugin.Log.LogInfo("[SceneMonitor] Upgrades reseteados al llegar al menú.");
         }
 
-        // ── Coroutine de upgrades ─────────────────────────────────────
-
-        private IEnumerator AplicarUpgradesCoroutine()
+        public void AplicarUpgradesSync()
         {
-            VitaSyncPlugin.Log.LogInfo(
-                "[LSG] Coroutine iniciada. Esperando PlayerController + PunManager...");
+            // Calcular delta: solo lo canjeado en esta tienda.
+            int deltaStamina = SessionManager.UpgradesStamina - _aplicadosStamina;
+            int deltaGrip = SessionManager.UpgradesGrip - _aplicadosGrip;
+            int deltaHealth = SessionManager.UpgradesHealth - _aplicadosHealth;
+            int deltaSpeed = SessionManager.UpgradesSpeed - _aplicadosSpeed;
 
-            float elapsed = 0f;
-            const float TIMEOUT = 40f;
-
-            while (elapsed < TIMEOUT)
+            if (deltaStamina == 0 && deltaGrip == 0 && deltaHealth == 0 && deltaSpeed == 0)
             {
-                var ctrl = PlayerController.instance;
-                if (ctrl != null &&
-                    ctrl.playerAvatarScript != null &&
-                    PunManager.instance != null)
-                {
-                    string sid = SemiFunc.PlayerGetSteamID(ctrl.playerAvatarScript);
-                    if (!string.IsNullOrEmpty(sid))
-                    {
-                        // Esperar 3 frames para que LateStart() termine
-                        // su propio calculo de stats antes de reaplicar.
-                        yield return null;
-                        yield return null;
-                        yield return null;
-
-                        VitaSyncPlugin.Log.LogInfo(
-                            "[LSG] Aplicando upgrades. sid=" + sid +
-                            " STM=" + SessionManager.UpgradesStamina +
-                            " GRP=" + SessionManager.UpgradesGrip +
-                            " HP=" + SessionManager.UpgradesHealth +
-                            " SPD=" + SessionManager.UpgradesSpeed);
-
-                        if (SessionManager.UpgradesStamina > 0)
-                            PunManager.instance.UpgradePlayerEnergy(
-                                sid, SessionManager.UpgradesStamina);
-
-                        if (SessionManager.UpgradesGrip > 0)
-                            PunManager.instance.UpgradePlayerGrabStrength(
-                                sid, SessionManager.UpgradesGrip);
-
-                        if (SessionManager.UpgradesHealth > 0)
-                            PunManager.instance.UpgradePlayerHealth(
-                                sid, SessionManager.UpgradesHealth);
-
-                        if (SessionManager.UpgradesSpeed > 0)
-                            PunManager.instance.UpgradePlayerSprintSpeed(
-                                sid, SessionManager.UpgradesSpeed);
-
-                        VitaSyncPlugin.Log.LogInfo(
-                            "[LSG] Upgrades aplicados correctamente.");
-                        _upgradesPendientes = false;
-                        yield break;
-                    }
-                }
-
-                elapsed += Time.deltaTime;
-                yield return null;
+                VitaSyncPlugin.Log.LogInfo("[LSG] Sin upgrades nuevos que aplicar.");
+                return;
             }
 
-            VitaSyncPlugin.Log.LogWarning(
-                "[LSG] TIMEOUT: PlayerController no disponible tras " +
-                TIMEOUT + "s. Upgrades no aplicados en este nivel.");
-            _upgradesPendientes = false;
+            string sid = null;
+            var ctrl = PlayerController.instance;
+            if (ctrl != null && ctrl.playerAvatarScript != null)
+                sid = SemiFunc.PlayerGetSteamID(ctrl.playerAvatarScript);
+            if (string.IsNullOrEmpty(sid))
+            {
+                var local = SemiFunc.PlayerAvatarLocal();
+                if (local != null) sid = SemiFunc.PlayerGetSteamID(local);
+            }
+            if (string.IsNullOrEmpty(sid))
+            {
+                VitaSyncPlugin.Log.LogWarning("[LSG] steamID no disponible. Abortando.");
+                return;
+            }
+            if (PunManager.instance == null || StatsManager.instance == null)
+            {
+                VitaSyncPlugin.Log.LogWarning("[LSG] PunManager o StatsManager nulos. Abortando.");
+                return;
+            }
+
+            VitaSyncPlugin.Log.LogInfo(
+                "[LSG] Aplicando delta. sid=" + sid +
+                " dHP=" + deltaHealth + " dGRP=" + deltaGrip +
+                " dSTM=" + deltaStamina + " dSPD=" + deltaSpeed);
+
+            if (deltaStamina > 0)
+                PunManager.instance.UpgradePlayerEnergy(sid, deltaStamina);
+
+            if (deltaGrip > 0)
+                PunManager.instance.UpgradePlayerGrabStrength(sid, deltaGrip);
+
+            if (deltaHealth > 0)
+            {
+                PunManager.instance.UpgradePlayerHealth(sid, deltaHealth);
+                int nativos;
+                StatsManager.instance.playerUpgradeHealth.TryGetValue(sid, out nativos);
+                int nuevoMax = 100 + nativos * 20;
+                StatsManager.instance.SetPlayerHealth(sid, nuevoMax, false);
+                VitaSyncPlugin.Log.LogInfo(
+                    "[LSG] Health persistido=" + nuevoMax +
+                    " RunIsShop=" + SemiFunc.RunIsShop());
+            }
+
+            if (deltaSpeed > 0)
+                PunManager.instance.UpgradePlayerSprintSpeed(sid, deltaSpeed);
+
+            // Actualizar lo ya aplicado.
+            _aplicadosStamina = SessionManager.UpgradesStamina;
+            _aplicadosGrip = SessionManager.UpgradesGrip;
+            _aplicadosHealth = SessionManager.UpgradesHealth;
+            _aplicadosSpeed = SessionManager.UpgradesSpeed;
+
+            VitaSyncPlugin.Log.LogInfo("[LSG] Upgrades aplicados. sid=" + sid);
         }
     }
 }

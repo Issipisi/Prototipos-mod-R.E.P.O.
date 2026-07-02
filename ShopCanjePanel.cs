@@ -257,7 +257,7 @@ namespace VitaSync
                 .GetComponent<Button>().onClick.AddListener(OnLogoutClick);
 
             RefreshUI();
-            VitaSyncPlugin.Log.LogInfo("[Shop] Panel construido (P7 rediseño).");
+            VitaSyncPlugin.Log.LogInfo("[Shop] Panel construido (P8).");
         }
 
         private void Update()
@@ -295,24 +295,14 @@ namespace VitaSync
                                   _profile.CostoSpeed;
             if (!_profile.PuedePagar(cost)) return;
 
-            var ctrl = PlayerController.instance;
-            if (ctrl != null && ctrl.playerAvatarScript != null &&
-                PunManager.instance != null)
-            {
-                string sid = SemiFunc.PlayerGetSteamID(ctrl.playerAvatarScript);
-                if (!string.IsNullOrEmpty(sid))
-                {
-                    switch (idx)
-                    {
-                        case 0: PunManager.instance.UpgradePlayerEnergy(sid, 1); break;
-                        case 1: PunManager.instance.UpgradePlayerGrabStrength(sid, 1); break;
-                        case 2: PunManager.instance.UpgradePlayerHealth(sid, 1); break;
-                        case 3: PunManager.instance.UpgradePlayerSprintSpeed(sid, 1); break;
-                    }
-                    SessionManager.AddUpgrade(idx);
-                    VitaSyncPlugin.Log.LogInfo("[Shop] Upgrade: " + ATTR_NAMES[idx]);
-                }
-            }
+            // Solo registrar el upgrade en SessionManager.
+            // El upgrade real en StatsManager ocurre en Level - Lobby
+            // (ChangeLevel Prefix) donde RunIsShop()=false y el guard
+            // de SetPlayerHealth no bloquea.
+            // NO llamar PunManager aquí porque causaría duplicación.
+            SessionManager.AddUpgrade(idx);
+            VitaSyncPlugin.Log.LogInfo("[Shop] Upgrade registrado para Lobby: " + ATTR_NAMES[idx]);
+
             _profile.Puntos -= cost;
             _profile.CanjesUsados++;
             if (SessionManager.IsActive)

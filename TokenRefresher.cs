@@ -5,50 +5,38 @@ using UnityEngine.Networking;
 
 namespace VitaSync
 {
-    /// <summary>
-    /// Renueva el JWT via POST /token/refresh al entrar a cada tienda.
-    /// P7: eliminado GameObject.Find() — usa VitaSyncPlugin.Monitor directamente.
-    /// GameObject.Find() no busca en objetos DontDestroyOnLoad en Unity 2022,
-    /// por lo que siempre retornaba null y el refresco nunca se ejecutaba.
-    /// </summary>
     public static class TokenRefresher
     {
         private static bool _refreshInProgress = false;
 
-        /// <summary>
-        /// Llamado desde SceneMonitor.StartTokenRefresh() con referencia directa.
-        /// </summary>
-        public static void TryRefreshDirect(MonoBehaviour runner)
+        public static void TryRefresh()
         {
-            if (_refreshInProgress)
-            {
-                VitaSyncPlugin.Log.LogInfo(
-                    "[Refresh] Ya en progreso. Ignorado.");
-                return;
-            }
+            if (_refreshInProgress) return;
             if (!SessionManager.IsActive)
             {
-                VitaSyncPlugin.Log.LogInfo(
-                    "[Refresh] Sin sesion activa. Omitido.");
-                return;
-            }
-            if (runner == null)
-            {
-                VitaSyncPlugin.Log.LogWarning(
-                    "[Refresh] Runner nulo. Omitido.");
+                VitaSyncPlugin.Log.LogWarning("[Refresh] Runner nulo. Omitido.");
                 return;
             }
 
-            runner.StartCoroutine(RefreshCoroutine());
+            // Usar referencia directa del monitor (DontDestroyOnLoad).
+            // GameObject.Find() no busca en DontDestroyOnLoad en Unity 2022.
+            var go = GameObject.Find("VitaSync_Monitor");
+            SceneMonitor monitor = go?.GetComponent<SceneMonitor>();
+            if (monitor == null)
+            {
+                VitaSyncPlugin.Log.LogWarning("[Refresh] Monitor nulo. Omitido.");
+                return;
+            }
+
+            monitor.StartCoroutine(RefreshCoroutine(monitor));
         }
 
-        private static IEnumerator RefreshCoroutine()
+        private static IEnumerator RefreshCoroutine(MonoBehaviour runner)
         {
             _refreshInProgress = true;
             VitaSyncPlugin.Log.LogInfo("[Refresh] Iniciando refresco de token...");
 
-            string jsonBody =
-                "{\"token\":\"" + SessionManager.BearerToken + "\"}";
+            string jsonBody = "{\"token\":\"" + SessionManager.BearerToken + "\"}";
 
             using (UnityWebRequest req =
                 new UnityWebRequest(VitaSyncPlugin.AUTH_REFRESH, "POST"))
@@ -68,25 +56,22 @@ namespace VitaSync
                 {
                     string newToken = LifeSyncClient.ExtractString(
                         req.downloadHandler.text, "access_token");
-
                     if (!string.IsNullOrEmpty(newToken))
                     {
                         SessionManager.UpdateToken(newToken);
-                        VitaSyncPlugin.Log.LogInfo(
-                            "[Refresh] Token actualizado correctamente.");
+                        VitaSyncPlugin.Log.LogInfo("[Refresh] Token actualizado.");
                     }
                     else
                     {
                         VitaSyncPlugin.Log.LogWarning(
-                            "[Refresh] Respuesta 200 sin access_token. " +
-                            "Token anterior conservado.");
+                            "[Refresh] Respuesta 200 sin access_token.");
                     }
                 }
                 else
                 {
                     VitaSyncPlugin.Log.LogWarning(
                         "[Refresh] Error HTTP " + req.responseCode +
-                        ": " + req.error + ". Token anterior conservado.");
+                        ": " + req.error);
                 }
             }
 
