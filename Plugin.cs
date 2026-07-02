@@ -6,7 +6,7 @@ using System.Collections;
 
 namespace VitaSync
 {
-    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.8.0")]
+    [BepInPlugin("com.diinf.vitasync", "VitaSync", "0.9.0")]
     public class VitaSyncPlugin : BaseUnityPlugin
     {
         public static VitaSyncPlugin Instance { get; private set; }
@@ -29,12 +29,11 @@ namespace VitaSync
             GameObject go = new GameObject("VitaSync_Monitor");
             Monitor = go.AddComponent<SceneMonitor>();
             DontDestroyOnLoad(go);
-            Log.LogInfo("VitaSync v0.8.0 cargado.");
+            Log.LogInfo("VitaSync v0.9.0 cargado.");
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            Log.LogInfo("[VitaSync] Escena: " + scene.name + " (" + mode + ")");
             if (scene.name == "Main" && mode == LoadSceneMode.Additive) return;
             if (!scene.name.Contains("Shop")) ShopCanjePanel.DestroyInstance();
             if (scene.name == "LobbyJoin" || scene.name == "Reload") Monitor?.OnExitRun();
@@ -53,7 +52,7 @@ namespace VitaSync
                 // Esto cubre tanto "salir de partida" como "nueva partida".
                 Monitor?.ResetUpgrades();
 
-                if (SessionManager.IsActive) { Log.LogInfo("[Login] Sesión activa, omitido."); return; }
+                if (SessionManager.IsActive) { return; }
                 Log.LogInfo("[Login] MenuPageMain: desplegando HUD.");
                 LoginHUDPanel.Initialize();
             }
@@ -77,11 +76,10 @@ namespace VitaSync
         {
             static void Postfix()
             {
-                if (!SemiFunc.RunIsShop()) { Log.LogInfo("[Shop] ShopInitialize: fuera de tienda, ignorado."); return; }
+                if (!SemiFunc.RunIsShop()) { return; }
                 var profile = Instance.GetActiveProfile();
                 if (profile == null || !SessionManager.IsActive) return;
                 profile.CanjesUsados = 0;
-                Log.LogInfo("[Shop] Canjes reseteados -> 0/" + profile.CanjesMax + ".");
                 TokenRefresher.TryRefresh();
                 ShopCanjePanel.EnsureInstance(profile);
             }
@@ -113,15 +111,7 @@ namespace VitaSync
                 // !_levelFailed → SetRunLevel() → nivel real.
                 if (RunManager.instance == null) return;
                 if (!SemiFunc.RunIsLobby()) return;
-                if (_levelFailed) return; // fallo de nivel, no aplica
-
-                Log.LogInfo(
-                    "[LSG] ChangeLevel desde Lobby detectado. " +
-                    "Aplicando upgrades en StatsManager. " +
-                    "HP=" + SessionManager.UpgradesHealth +
-                    " GRP=" + SessionManager.UpgradesGrip +
-                    " STM=" + SessionManager.UpgradesStamina +
-                    " SPD=" + SessionManager.UpgradesSpeed);
+                if (_levelFailed) return;
 
                 Monitor?.AplicarUpgradesSync();
             }
@@ -152,7 +142,6 @@ namespace VitaSync
 
         public void OnExitRun()
         {
-            VitaSyncPlugin.Log.LogInfo("[SceneMonitor] Estado reseteado al salir de run.");
         }
 
         public void ResetUpgrades()
@@ -162,7 +151,6 @@ namespace VitaSync
             _aplicadosGrip = 0;
             _aplicadosHealth = 0;
             _aplicadosSpeed = 0;
-            VitaSyncPlugin.Log.LogInfo("[SceneMonitor] Upgrades reseteados al llegar al menú.");
         }
 
         public void AplicarUpgradesSync()
@@ -198,11 +186,6 @@ namespace VitaSync
                 VitaSyncPlugin.Log.LogWarning("[LSG] PunManager o StatsManager nulos. Abortando.");
                 return;
             }
-
-            VitaSyncPlugin.Log.LogInfo(
-                "[LSG] Aplicando delta. sid=" + sid +
-                " dHP=" + deltaHealth + " dGRP=" + deltaGrip +
-                " dSTM=" + deltaStamina + " dSPD=" + deltaSpeed);
 
             if (deltaStamina > 0)
                 PunManager.instance.UpgradePlayerEnergy(sid, deltaStamina);

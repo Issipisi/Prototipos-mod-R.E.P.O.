@@ -50,12 +50,6 @@
                 case 2: UpgradesHealth++; break;
                 case 3: UpgradesSpeed++; break;
             }
-            VitaSyncPlugin.Log.LogInfo(
-                "[Session] Upgrade registrado idx=" + idx +
-                " | STM=" + UpgradesStamina +
-                " GRP=" + UpgradesGrip +
-                " HP=" + UpgradesHealth +
-                " SPD=" + UpgradesSpeed);
         }
 
         public static void ClearUpgrades()

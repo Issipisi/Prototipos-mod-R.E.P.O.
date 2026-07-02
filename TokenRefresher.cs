@@ -34,7 +34,6 @@ namespace VitaSync
         private static IEnumerator RefreshCoroutine(MonoBehaviour runner)
         {
             _refreshInProgress = true;
-            VitaSyncPlugin.Log.LogInfo("[Refresh] Iniciando refresco de token...");
 
             string jsonBody = "{\"token\":\"" + SessionManager.BearerToken + "\"}";
 
@@ -48,7 +47,7 @@ namespace VitaSync
                     "Bearer " + SessionManager.BearerToken);
                 req.SetRequestHeader("Content-Type", "application/json");
                 req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
+                req.timeout = 8;
 
                 yield return req.SendWebRequest();
 
@@ -63,8 +62,7 @@ namespace VitaSync
                     }
                     else
                     {
-                        VitaSyncPlugin.Log.LogWarning(
-                            "[Refresh] Respuesta 200 sin access_token.");
+                        VitaSyncPlugin.Log.LogWarning("[Refresh] Token vacío en respuesta 200.");
                     }
                 }
                 else

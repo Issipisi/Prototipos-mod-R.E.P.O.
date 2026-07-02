@@ -257,7 +257,6 @@ namespace VitaSync
                 .GetComponent<Button>().onClick.AddListener(OnLogoutClick);
 
             RefreshUI();
-            VitaSyncPlugin.Log.LogInfo("[Shop] Panel construido (P8).");
         }
 
         private void Update()
@@ -301,7 +300,6 @@ namespace VitaSync
             // de SetPlayerHealth no bloquea.
             // NO llamar PunManager aquí porque causaría duplicación.
             SessionManager.AddUpgrade(idx);
-            VitaSyncPlugin.Log.LogInfo("[Shop] Upgrade registrado para Lobby: " + ATTR_NAMES[idx]);
 
             _profile.Puntos -= cost;
             _profile.CanjesUsados++;
@@ -334,7 +332,7 @@ namespace VitaSync
                 req.SetRequestHeader("Authorization", "Bearer " + token);
                 req.SetRequestHeader("Content-Type", "application/json");
                 req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 15;
+                req.timeout = 8;
                 yield return req.SendWebRequest();
                 if (req.result == UnityWebRequest.Result.Success)
                     VitaSyncPlugin.Log.LogInfo("[LSG] Cloud -" + cantidad + " pts.");

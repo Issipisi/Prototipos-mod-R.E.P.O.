@@ -1,151 +1,16 @@
 ﻿using System;
-using System.Collections;
-using BepInEx.Logging;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace VitaSync
 {
     /// <summary>
-    /// Cliente REST del módulo cloud de LifeSync-Games.
+    /// Utilidades compartidas del módulo cloud LifeSync-Games.
+    /// El flujo de autenticación y balance se gestiona en LoginHUDPanel.
+    /// Esta clase expone solo ExtractString, ParseDimensionBalance
+    /// y PhysicalProfile, que son los únicos elementos usados externamente.
     /// </summary>
     public class LifeSyncClient : MonoBehaviour
     {
-        private const string AUTH_LOGIN = "https://lsg.diinf.usach.cl/lsg-auth/login";
-        private const string AUTH_WHOAMI = "https://lsg.diinf.usach.cl/lsg-auth/whoami";
-        private const string CORE_BASE = "https://lsg.diinf.usach.cl/lsg-core-api";
-        private const string FISICO_BASE_ID = "2";
-
-        private const string USERNAME = "isidora.rojas.a@usach.cl";
-        private const string PASSWORD = "irojas2026";
-
-        private string _token = null;
-        private int _playerId = -1;
-
-        public bool IsAuthenticated => !string.IsNullOrEmpty(_token);
-        public PhysicalProfile Profile { get; private set; }
-
-        private static ManualLogSource Log => VitaSyncPlugin.Log;
-
-        public void Connect()
-        {
-            StartCoroutine(AuthAndFetch());
-        }
-
-        private IEnumerator AuthAndFetch()
-        {
-            yield return StartCoroutine(Login());
-            if (!IsAuthenticated)
-            {
-                Log.LogError("[LSG] Autenticación fallida. Modo pasivo.");
-                Profile = new PhysicalProfile();
-                yield break;
-            }
-
-            yield return StartCoroutine(WhoAmI());
-            if (_playerId < 0)
-            {
-                Log.LogError("[LSG] No se obtuvo player_id. Modo pasivo.");
-                Profile = new PhysicalProfile();
-                yield break;
-            }
-
-            Log.LogInfo("[LSG] Player ID obtenido con éxito: " + _playerId);
-            yield return StartCoroutine(FetchBalance());
-        }
-
-        private IEnumerator Login()
-        {
-            Log.LogInfo("[LSG] Iniciando autenticación...");
-            WWWForm form = new WWWForm();
-            form.AddField("username", USERNAME);
-            form.AddField("password", PASSWORD);
-            form.AddField("grant_type", "");
-            form.AddField("scope", "");
-            form.AddField("client_id", "");
-            form.AddField("client_secret", "");
-
-            using (UnityWebRequest req = UnityWebRequest.Post(AUTH_LOGIN, form))
-            {
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
-                yield return req.SendWebRequest();
-
-                if (req.result == UnityWebRequest.Result.Success)
-                {
-                    _token = ExtractString(req.downloadHandler.text, "access_token");
-                    if (!string.IsNullOrEmpty(_token))
-                        Log.LogInfo("[LSG] Token JWT obtenido de forma correcta.");
-                    else
-                        Log.LogError("[LSG] Token no encontrado en la respuesta.");
-                }
-                else
-                {
-                    Log.LogError("[LSG] Login HTTP " + req.responseCode + ": " + req.error);
-                }
-            }
-        }
-
-        private IEnumerator WhoAmI()
-        {
-            using (UnityWebRequest req = UnityWebRequest.Get(AUTH_WHOAMI))
-            {
-                req.SetRequestHeader("Authorization", "Bearer " + _token);
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
-                yield return req.SendWebRequest();
-
-                if (req.result == UnityWebRequest.Result.Success)
-                {
-                    string idStr = ExtractString(req.downloadHandler.text, "id_players");
-                    if (!int.TryParse(idStr, out _playerId))
-                    {
-                        Log.LogError("[LSG] No se pudo parsear id_players.");
-                    }
-                }
-                else
-                {
-                    Log.LogError("[LSG] WhoAmI HTTP " + req.responseCode + ": " + req.error);
-                }
-            }
-        }
-
-        private IEnumerator FetchBalance()
-        {
-            string url = CORE_BASE + "/players/" + _playerId + "/points/balance";
-            Log.LogInfo("[LSG] Consultando balance: " + url);
-
-            using (UnityWebRequest req = UnityWebRequest.Get(url))
-            {
-                req.SetRequestHeader("Authorization", "Bearer " + _token);
-                req.SetRequestHeader("Accept", "application/json");
-                req.timeout = 10;
-                yield return req.SendWebRequest();
-
-                if (req.result == UnityWebRequest.Result.Success)
-                {
-                    int pts = ParseDimensionBalance(req.downloadHandler.text, FISICO_BASE_ID);
-                    Log.LogInfo("[LSG] Puntos físicos recuperados: " + pts);
-                    Profile = PhysicalProfile.FromPoints(pts);
-                    Log.LogInfo("[LSG] Objeto PhysicalProfile construido: " + Profile.ToString());
-                }
-                else
-                {
-                    Log.LogWarning("[LSG] Balance HTTP " + req.responseCode + ". Activando modo pasivo.");
-                    Profile = new PhysicalProfile();
-                }
-            }
-        }
-
-        public void DeductPoints(int amount, Action onSuccess = null)
-        {
-            if (Profile != null)
-            {
-                Profile.Puntos -= amount;
-            }
-            onSuccess?.Invoke();
-        }
-
         internal static string ExtractString(string json, string key)
         {
             string k = "\"" + key + "\"";
@@ -162,11 +27,12 @@ namespace VitaSync
                 return ve < 0 ? null : json.Substring(vs + 1, ve - vs - 1);
             }
             int end = vs;
-            while (end < json.Length && json[end] != ',' && json[end] != '}' && json[end] != ']') end++;
+            while (end < json.Length &&
+                   json[end] != ',' && json[end] != '}' && json[end] != ']') end++;
             return json.Substring(vs, end - vs).Trim();
         }
 
-        private static int ParseDimensionBalance(string json, string dimId)
+        internal static int ParseDimensionBalance(string json, string dimId)
         {
             int idx = 0;
             while (true)
@@ -210,20 +76,14 @@ namespace VitaSync
                 CanjesMax = 2;
             }
 
-            public static PhysicalProfile FromPoints(int pts)
-            {
-                return new PhysicalProfile { Puntos = pts };
-            }
+            public static PhysicalProfile FromPoints(int pts) =>
+                new PhysicalProfile { Puntos = pts };
 
-            public bool PuedePagar(int costo)
-            {
-                return PuedeCanjeaMas && Puntos >= costo;
-            }
+            public bool PuedePagar(int costo) =>
+                PuedeCanjeaMas && Puntos >= costo;
 
-            public override string ToString()
-            {
-                return "Puntos=" + Puntos + " | Canjes=" + CanjesUsados + "/" + CanjesMax;
-            }
+            public override string ToString() =>
+                "Puntos=" + Puntos + " | Canjes=" + CanjesUsados + "/" + CanjesMax;
         }
     }
 }
