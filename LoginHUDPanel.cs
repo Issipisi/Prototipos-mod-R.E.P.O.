@@ -319,6 +319,8 @@ namespace VitaSync
                 VitaSyncPlugin.Instance.SetActiveProfile(p);
                 VitaSyncPlugin.Log.LogInfo(
                     "[LSG] Login exitoso. Balance: " + puntos);
+                // Iniciar registro de sesión en SessionLogger.
+                SessionLogger.StartSession();
             }
             Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             if (_canvasGO != null) Destroy(_canvasGO);

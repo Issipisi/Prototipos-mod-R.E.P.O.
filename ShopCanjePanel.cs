@@ -303,6 +303,10 @@ namespace VitaSync
 
             _profile.Puntos -= cost;
             _profile.CanjesUsados++;
+
+            // Registrar canje en SessionLogger.
+            SessionLogger.LogUpgradeRedeemed(
+                ATTR_NAMES[idx], cost, _profile.Puntos);
             if (SessionManager.IsActive)
                 StartCoroutine(EnviarDescuento(
                     SessionManager.PlayerId, SessionManager.BearerToken,

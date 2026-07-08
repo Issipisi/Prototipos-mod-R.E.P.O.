@@ -36,7 +36,16 @@ namespace VitaSync
         {
             if (scene.name == "Main" && mode == LoadSceneMode.Additive) return;
             if (!scene.name.Contains("Shop")) ShopCanjePanel.DestroyInstance();
-            if (scene.name == "LobbyJoin" || scene.name == "Reload") Monitor?.OnExitRun();
+            if (scene.name == "LobbyJoin" || scene.name == "Reload")
+            {
+                SessionLogger.EndSession();
+                Monitor?.ResetUpgrades();
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            SessionLogger.EndSession();
         }
 
         public void SetActiveProfile(LifeSyncClient.PhysicalProfile p) => _activeProfile = p;
@@ -48,11 +57,8 @@ namespace VitaSync
         {
             static void Postfix()
             {
-                // Resetear upgrades siempre al llegar al menú principal.
-                // Esto cubre tanto "salir de partida" como "nueva partida".
                 Monitor?.ResetUpgrades();
-
-                if (SessionManager.IsActive) { return; }
+                if (SessionManager.IsActive) return;
                 Log.LogInfo("[Login] MenuPageMain: desplegando HUD.");
                 LoginHUDPanel.Initialize();
             }
@@ -76,44 +82,73 @@ namespace VitaSync
         {
             static void Postfix()
             {
-                if (!SemiFunc.RunIsShop()) { return; }
+                if (!SemiFunc.RunIsShop()) return;
                 var profile = Instance.GetActiveProfile();
                 if (profile == null || !SessionManager.IsActive) return;
                 profile.CanjesUsados = 0;
+                SessionLogger.LogShopOpen(profile.Puntos);
                 TokenRefresher.TryRefresh();
                 ShopCanjePanel.EnsureInstance(profile);
             }
         }
 
-        // ── UPGRADES: ChangeLevel Prefix ──────────────────────────────
-        // ChangeLevel() se llama con levelCurrent==levelLobby cuando el
-        // jugador sale del Lobby hacia el nivel real. En ese momento:
-        //   - RunIsShop() = false → SetPlayerHealth() no está bloqueado
-        //   - PlayerController del Lobby todavía existe (podría ser null)
-        //   - StatsManager persiste entre escenas (DontDestroyOnLoad)
-        //
-        // Escribimos directamente en StatsManager aquí para que cuando
-        // el nivel real cargue y LateStart()/Fetch() corran, lean los
-        // valores de upgrades ya persistidos.
-        //
-        // Usamos Prefix para actuar ANTES de que SetRunLevel() cambie
-        // levelCurrent y antes de que RestartScene() destruya la escena.
+        // ── MUERTE DEL EQUIPO ─────────────────────────────────────────
+        [HarmonyPatch(typeof(RunManager), "AllPlayersDeadSet")]
+        public static class AllPlayersDeadSetPatch
+        {
+            static void Postfix(bool _set)
+            {
+                if (!SessionManager.IsActive) return;
+                if (!_set) return;
+                int completados = RunManager.instance?.levelsCompleted ?? 0;
+                SessionLogger.LogTeamDead(completados);
+            }
+        }
+
+        // ── UPGRADES y LOGGER: ChangeLevel ────────────────────────────
+        // Prefix: actúa ANTES del cambio de nivel.
+        //   - Registra fin de nivel real saliente.
+        //   - Registra cierre de tienda si salimos de una.
+        //   - Aplica upgrades LSG al salir del Lobby hacia nivel real.
+        // Postfix: actúa DESPUÉS del cambio de nivel.
+        //   - Inicia sesión de logger si es el primer nivel de la run.
+        //   - Registra inicio del nuevo nivel real.
         [HarmonyPatch(typeof(RunManager), "ChangeLevel")]
         public static class ChangeLevelPatch
         {
             static void Prefix(bool _completedLevel, bool _levelFailed)
             {
                 if (!SessionManager.IsActive) return;
-                if (!SessionManager.TieneUpgradesPendientes) return;
 
-                // Solo actuar cuando salimos del Lobby hacia el nivel real.
-                // El flujo confirmado: levelCurrent==levelLobby &&
-                // !_levelFailed → SetRunLevel() → nivel real.
+                if (SemiFunc.RunIsLevel())
+                {
+                    string lvl = RunManager.instance?.levelCurrent?.name ?? "unknown";
+                    SessionLogger.LogLevelEnd(lvl);
+                }
+
+                if (SemiFunc.RunIsShop())
+                    SessionLogger.LogShopClose(
+                        Instance.GetActiveProfile()?.CanjesUsados ?? 0);
+
+                if (!SessionManager.TieneUpgradesPendientes) return;
                 if (RunManager.instance == null) return;
                 if (!SemiFunc.RunIsLobby()) return;
                 if (_levelFailed) return;
 
                 Monitor?.AplicarUpgradesSync();
+            }
+
+            static void Postfix()
+            {
+                if (!SessionManager.IsActive) return;
+                string lvl = RunManager.instance?.levelCurrent?.name ?? "";
+                if (lvl.Contains("Lobby") || lvl.Contains("Shop")) return;
+
+                int completados = RunManager.instance?.levelsCompleted ?? 0;
+                if (completados == 0)
+                    SessionLogger.StartSession();
+
+                SessionLogger.LogLevelStart(lvl);
             }
         }
     }
@@ -123,8 +158,6 @@ namespace VitaSync
     {
         private float _timer = 0f;
 
-        // Upgrades ya aplicados en Lobbies anteriores de esta run.
-        // Solo el delta (UpgradesX - _aplicadosX) se envía a PunManager.
         private int _aplicadosStamina = 0;
         private int _aplicadosGrip = 0;
         private int _aplicadosHealth = 0;
@@ -140,10 +173,6 @@ namespace VitaSync
             }
         }
 
-        public void OnExitRun()
-        {
-        }
-
         public void ResetUpgrades()
         {
             SessionManager.ClearUpgrades();
@@ -155,17 +184,13 @@ namespace VitaSync
 
         public void AplicarUpgradesSync()
         {
-            // Calcular delta: solo lo canjeado en esta tienda.
             int deltaStamina = SessionManager.UpgradesStamina - _aplicadosStamina;
             int deltaGrip = SessionManager.UpgradesGrip - _aplicadosGrip;
             int deltaHealth = SessionManager.UpgradesHealth - _aplicadosHealth;
             int deltaSpeed = SessionManager.UpgradesSpeed - _aplicadosSpeed;
 
-            if (deltaStamina == 0 && deltaGrip == 0 && deltaHealth == 0 && deltaSpeed == 0)
-            {
-                VitaSyncPlugin.Log.LogInfo("[LSG] Sin upgrades nuevos que aplicar.");
-                return;
-            }
+            if (deltaStamina == 0 && deltaGrip == 0 &&
+                deltaHealth == 0 && deltaSpeed == 0) return;
 
             string sid = null;
             var ctrl = PlayerController.instance;
@@ -178,12 +203,12 @@ namespace VitaSync
             }
             if (string.IsNullOrEmpty(sid))
             {
-                VitaSyncPlugin.Log.LogWarning("[LSG] steamID no disponible. Abortando.");
+                VitaSyncPlugin.Log.LogWarning("[LSG] steamID no disponible.");
                 return;
             }
             if (PunManager.instance == null || StatsManager.instance == null)
             {
-                VitaSyncPlugin.Log.LogWarning("[LSG] PunManager o StatsManager nulos. Abortando.");
+                VitaSyncPlugin.Log.LogWarning("[LSG] PunManager o StatsManager nulos.");
                 return;
             }
 
@@ -200,21 +225,21 @@ namespace VitaSync
                 StatsManager.instance.playerUpgradeHealth.TryGetValue(sid, out nativos);
                 int nuevoMax = 100 + nativos * 20;
                 StatsManager.instance.SetPlayerHealth(sid, nuevoMax, false);
-                VitaSyncPlugin.Log.LogInfo(
-                    "[LSG] Health persistido=" + nuevoMax +
-                    " RunIsShop=" + SemiFunc.RunIsShop());
+                VitaSyncPlugin.Log.LogInfo("[LSG] Health persistido=" + nuevoMax);
             }
 
             if (deltaSpeed > 0)
                 PunManager.instance.UpgradePlayerSprintSpeed(sid, deltaSpeed);
 
-            // Actualizar lo ya aplicado.
             _aplicadosStamina = SessionManager.UpgradesStamina;
             _aplicadosGrip = SessionManager.UpgradesGrip;
             _aplicadosHealth = SessionManager.UpgradesHealth;
             _aplicadosSpeed = SessionManager.UpgradesSpeed;
 
             VitaSyncPlugin.Log.LogInfo("[LSG] Upgrades aplicados. sid=" + sid);
+            SessionLogger.LogUpgradesApplied(
+                _aplicadosHealth, _aplicadosStamina,
+                _aplicadosGrip, _aplicadosSpeed);
         }
     }
 }

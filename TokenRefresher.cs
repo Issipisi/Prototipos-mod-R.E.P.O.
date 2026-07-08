@@ -12,16 +12,11 @@ namespace VitaSync
         public static void TryRefresh()
         {
             if (_refreshInProgress) return;
-            if (!SessionManager.IsActive)
-            {
-                VitaSyncPlugin.Log.LogWarning("[Refresh] Runner nulo. Omitido.");
-                return;
-            }
+            if (!SessionManager.IsActive) return;
 
-            // Usar referencia directa del monitor (DontDestroyOnLoad).
-            // GameObject.Find() no busca en DontDestroyOnLoad en Unity 2022.
-            var go = GameObject.Find("VitaSync_Monitor");
-            SceneMonitor monitor = go?.GetComponent<SceneMonitor>();
+            // Usar referencia estática directa — GameObject.Find() no
+            // encuentra objetos en DontDestroyOnLoad en Unity 2022.
+            SceneMonitor monitor = VitaSyncPlugin.Monitor;
             if (monitor == null)
             {
                 VitaSyncPlugin.Log.LogWarning("[Refresh] Monitor nulo. Omitido.");
