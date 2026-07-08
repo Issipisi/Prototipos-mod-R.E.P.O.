@@ -7,3 +7,4 @@ Prototipo 5 : Se crea SessionManager y se realiza conexión a módulo cloud de L
 Prototipo 6 : Se crea TokenRefresher y se consolida la estabilidad del Login y casos de cierre e inicio de sesión
 Prototipo 7 : Se rediseñan HUD visuales de Login y Canje en Tienda, además de ajustes a otras funcionalidades 
 Prototipo 8 : Se corrige el mecanismo de aplicación de mejoras en nivel real, además de optimización y empaquetado del dll en general.
+Prototipo 9 : VitaSync + Sensor Logger
